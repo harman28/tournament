@@ -76,16 +76,17 @@ export function computeStandings(players: Player[], games: Game[]): Standing[] {
   })
 
   // Assign shared ranks: tied players share the same rank
-  const standings: Standing[] = unsorted.map((s, i) => {
+  const standings: Standing[] = unsorted.reduce<Standing[]>((acc, s, i) => {
     let rank = i + 1
     if (i > 0) {
       const prev = unsorted[i - 1]
       if (s.score === prev.score && s.buchholz === prev.buchholz && s.wins === prev.wins) {
-        rank = standings[i - 1].rank
+        rank = acc[i - 1].rank
       }
     }
-    return { ...s, rank }
-  })
+    acc.push({ ...s, rank })
+    return acc
+  }, [])
 
   return standings
 }
