@@ -1,0 +1,55 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Tournament {
+  id         String   @id
+  adminToken String   @unique
+  name       String
+  format     String   @default("swiss")
+  numRounds  Int
+  status     String   @default("setup")
+  createdAt  DateTime @default(now())
+  players    Player[]
+  rounds     Round[]
+}
+
+model Player {
+  id           String     @id @default(cuid())
+  tournamentId String
+  tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  name         String
+  rating       Int?
+  seed         Int
+  whiteGames   Game[]     @relation("WhitePlayer")
+  blackGames   Game[]     @relation("BlackPlayer")
+  byeGames     Game[]     @relation("ByePlayer")
+}
+
+model Round {
+  id           String     @id @default(cuid())
+  tournamentId String
+  tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  number       Int
+  status       String     @default("active")
+  games        Game[]
+}
+
+model Game {
+  id            String  @id @default(cuid())
+  roundId       String
+  round         Round   @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  whitePlayerId String?
+  blackPlayerId String?
+  byePlayerId   String?
+  white         Player? @relation("WhitePlayer", fields: [whitePlayerId], references: [id])
+  black         Player? @relation("BlackPlayer", fields: [blackPlayerId], references: [id])
+  byePlayer     Player? @relation("ByePlayer", fields: [byePlayerId], references: [id])
+  result        String?
+  pendingResult String?
+  pendingBy     String?
+}
