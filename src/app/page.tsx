@@ -36,6 +36,13 @@ export default function Home() {
 
   const validPlayers = players.filter((p) => p.name.trim())
   const isRR = format === 'rr' || format === 'drr'
+
+  const nameCounts = validPlayers.reduce<Record<string, number>>((acc, p) => {
+    const key = p.name.trim().toLowerCase()
+    acc[key] = (acc[key] ?? 0) + 1
+    return acc
+  }, {})
+  const isDuplicate = (name: string) => name.trim() && (nameCounts[name.trim().toLowerCase()] ?? 0) > 1
   const recommended = recommendedRounds(Math.max(validPlayers.length, 2), format)
 
   useEffect(() => {
@@ -60,6 +67,7 @@ export default function Home() {
     setError('')
     if (!name.trim()) return setError('Enter a tournament name.')
     if (validPlayers.length < 2) return setError('Add at least 2 players.')
+    if (validPlayers.some((p) => isDuplicate(p.name))) return setError('Two players have the same name.')
     setLoading(true)
     try {
       const res = await fetch('/api/tournaments', {
@@ -119,13 +127,17 @@ export default function Home() {
           {/* Players */}
           <Field label="Players" right={validPlayers.length >= 2 ? <span style={{ color: ACCENT, fontSize: 13 }}>{validPlayers.length} added</span> : undefined}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {players.map((p, i) => (
+              {players.map((p, i) => {
+                const dup = isDuplicate(p.name)
+                const isLast = i === players.length - 1
+                const defaultBorder = dup ? '#ef4444' : isLast ? DIM : BORDER
+                return (
                 <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                   <input type="text" value={p.name} onChange={(e) => updatePlayer(i, 'name', e.target.value)}
-                    placeholder={i === players.length - 1 ? '+ Add player…' : `Player ${i + 1}`}
-                    style={{ ...inputStyle(CARD, i === players.length - 1 ? DIM : BORDER, TEXT, MUTED), flex: 1, minWidth: 0, fontStyle: i === players.length - 1 && !p.name ? 'italic' : 'normal' }}
-                    onFocus={(e) => (e.target.style.borderColor = ACCENT)}
-                    onBlur={(e) => (e.target.style.borderColor = i === players.length - 1 ? DIM : BORDER)} />
+                    placeholder={isLast ? '+ Add player…' : `Player ${i + 1}`}
+                    style={{ ...inputStyle(CARD, defaultBorder, TEXT, MUTED), flex: 1, minWidth: 0, fontStyle: isLast && !p.name ? 'italic' : 'normal' }}
+                    onFocus={(e) => (e.target.style.borderColor = dup ? '#ef4444' : ACCENT)}
+                    onBlur={(e) => (e.target.style.borderColor = defaultBorder)} />
                   <input type="number" value={p.rating} onChange={(e) => updatePlayer(i, 'rating', e.target.value)}
                     placeholder="Rtg"
                     style={{ ...inputStyle(CARD, DIM, TEXT, MUTED), width: 68 }}
@@ -138,7 +150,8 @@ export default function Home() {
                     )}
                   </div>
                 </div>
-              ))}
+                )}
+              )}
             </div>
           </Field>
 
