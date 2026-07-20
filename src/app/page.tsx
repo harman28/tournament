@@ -10,7 +10,7 @@ const BORDER = '#74602c'
 const ACCENT = '#d4a853'
 const MUTED  = '#b89b6c'
 const TEXT   = '#f8f0dd'
-const DIM    = '#3d3010'
+const DIM    = '#96803f'
 
 type PlayerEntry = { name: string; rating: string }
 type Format = 'swiss' | 'rr' | 'drr'

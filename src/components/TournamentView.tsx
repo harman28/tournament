@@ -12,7 +12,7 @@ const ACCENT = '#d4a853'
 const AMBER  = '#f97316'
 const MUTED  = '#b89b6c'
 const TEXT   = '#f8f0dd'
-const DIM    = '#3d3010'
+const DIM    = '#96803f'
 
 type Tab = 'pairings' | 'results' | 'standings'
 
