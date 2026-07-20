@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import type { TournamentData, TournamentGame, StandingRow } from '@/lib/types'
 
@@ -24,6 +24,7 @@ type Props = {
 
 export default function TournamentView({ tournament, standings, adminToken }: Props) {
   const router = useRouter()
+  const [isRefreshing, startRefresh] = useTransition()
   const isAdmin = !!adminToken
   const defaultTab: Tab = tournament.status === 'complete' ? 'standings' : 'pairings'
   const [tab, setTab] = useState<Tab>(defaultTab)
@@ -59,6 +60,10 @@ export default function TournamentView({ tournament, standings, adminToken }: Pr
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }, [tournament.id])
+
+  const manualRefresh = useCallback(() => {
+    startRefresh(() => router.refresh())
+  }, [router])
 
   async function startTournament() {
     setActionLoading(true)
@@ -130,12 +135,18 @@ export default function TournamentView({ tournament, standings, adminToken }: Pr
                 {formatLabel} · {tournament.numRounds} rounds · {tournament.players.length} players
               </p>
             </div>
-            {isAdmin && (
-              <button onClick={copyLink}
-                style={{ fontSize: 12, border: `1px solid ${copied ? ACCENT : BORDER}`, borderRadius: 8, padding: '7px 14px', backgroundColor: copied ? `${ACCENT}18` : 'transparent', color: copied ? ACCENT : MUTED, cursor: 'pointer', flexShrink: 0, transition: 'all 0.2s' }}>
-                {copied ? '✓ Copied' : '🔗 Share'}
+            <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+              <button onClick={manualRefresh} disabled={isRefreshing}
+                style={{ fontSize: 12, border: `1px solid ${BORDER}`, borderRadius: 8, padding: '7px 14px', backgroundColor: 'transparent', color: isRefreshing ? ACCENT : MUTED, cursor: isRefreshing ? 'default' : 'pointer', transition: 'all 0.2s' }}>
+                {isRefreshing ? '↻ Refreshing…' : '↻ Refresh'}
               </button>
-            )}
+              {isAdmin && (
+                <button onClick={copyLink}
+                  style={{ fontSize: 12, border: `1px solid ${copied ? ACCENT : BORDER}`, borderRadius: 8, padding: '7px 14px', backgroundColor: copied ? `${ACCENT}18` : 'transparent', color: copied ? ACCENT : MUTED, cursor: 'pointer', transition: 'all 0.2s' }}>
+                  {copied ? '✓ Copied' : '🔗 Share'}
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </header>
