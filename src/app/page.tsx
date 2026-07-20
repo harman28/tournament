@@ -6,9 +6,9 @@ import { recommendedRounds } from '@/lib/swiss'
 
 const BG     = '#09080a'
 const CARD   = '#130f08'
-const BORDER = '#2e2610'
+const BORDER = '#74602c'
 const ACCENT = '#d4a853'
-const MUTED  = '#7a6440'
+const MUTED  = '#b89b6c'
 const TEXT   = '#f8f0dd'
 const DIM    = '#3d3010'
 
