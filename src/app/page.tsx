@@ -33,6 +33,8 @@ export default function Home() {
   const [numRounds, setNumRounds] = useState(3)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [pasteMode, setPasteMode] = useState(false)
+  const [pasteText, setPasteText] = useState('')
 
   const validPlayers = players.filter((p) => p.name.trim())
   const isRR = format === 'rr' || format === 'drr'
@@ -60,6 +62,22 @@ export default function Home() {
   function removePlayer(i: number) {
     if (players.length <= 2) return
     setPlayers((ps) => ps.filter((_, j) => j !== i))
+  }
+
+  function applyPastedPlayers() {
+    const lines = pasteText.split('\n').map((l) => l.trim()).filter(Boolean)
+    if (!lines.length) { setPasteMode(false); return }
+    const parsed: PlayerEntry[] = lines.map((line) => {
+      // Optional trailing rating after a comma or tab, e.g. "Magnus Carlsen, 2830"
+      const m = line.match(/^(.*?)[,\t]\s*(\d+)\s*$/)
+      return m ? { name: m[1].trim(), rating: m[2] } : { name: line, rating: '' }
+    })
+    setPlayers((ps) => {
+      const existingNamed = ps.filter((p) => p.name.trim())
+      return [...existingNamed, ...parsed, { name: '', rating: '' }]
+    })
+    setPasteMode(false)
+    setPasteText('')
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -125,34 +143,63 @@ export default function Home() {
           </Field>
 
           {/* Players */}
-          <Field label="Players" right={validPlayers.length >= 2 ? <span style={{ color: ACCENT, fontSize: 13 }}>{validPlayers.length} added</span> : undefined}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {players.map((p, i) => {
-                const dup = isDuplicate(p.name)
-                const isLast = i === players.length - 1
-                const defaultBorder = dup ? '#ef4444' : isLast ? DIM : BORDER
-                return (
-                <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <input type="text" value={p.name} onChange={(e) => updatePlayer(i, 'name', e.target.value)}
-                    placeholder={isLast ? '+ Add player…' : `Player ${i + 1}`}
-                    style={{ ...inputStyle(CARD, defaultBorder, TEXT, MUTED), flex: 1, minWidth: 0, fontStyle: isLast && !p.name ? 'italic' : 'normal' }}
-                    onFocus={(e) => (e.target.style.borderColor = dup ? '#ef4444' : ACCENT)}
-                    onBlur={(e) => (e.target.style.borderColor = defaultBorder)} />
-                  <input type="number" value={p.rating} onChange={(e) => updatePlayer(i, 'rating', e.target.value)}
-                    placeholder="Rtg"
-                    style={{ ...inputStyle(CARD, DIM, TEXT, MUTED), width: 68 }}
-                    onFocus={(e) => (e.target.style.borderColor = ACCENT)}
-                    onBlur={(e) => (e.target.style.borderColor = DIM)} />
-                  <div style={{ width: 24 }}>
-                    {i < players.length - 1 && players.length > 2 && (
-                      <button type="button" onClick={() => removePlayer(i)}
-                        style={{ background: 'none', border: 'none', color: MUTED, fontSize: 20, cursor: 'pointer', lineHeight: 1, padding: 0 }}>×</button>
-                    )}
-                  </div>
-                </div>
-                )}
-              )}
+          <Field label="Players" right={
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              {validPlayers.length >= 2 && <span style={{ color: ACCENT, fontSize: 13 }}>{validPlayers.length} added</span>}
+              <button type="button" onClick={() => setPasteMode((v) => !v)}
+                style={{ background: 'none', border: 'none', color: MUTED, fontSize: 12, fontWeight: 700, cursor: 'pointer', padding: 0, textDecoration: 'underline', textUnderlineOffset: 2 }}>
+                {pasteMode ? 'Enter one by one' : 'Paste a list'}
+              </button>
             </div>
+          }>
+            {pasteMode ? (
+              <div>
+                <textarea value={pasteText} onChange={(e) => setPasteText(e.target.value)} rows={6} autoFocus
+                  placeholder={'One player per line, e.g.\nMagnus Carlsen, 2830\nHikaru Nakamura'}
+                  style={{ ...inputStyle(CARD, BORDER, TEXT, MUTED), fontFamily: 'inherit', resize: 'vertical', lineHeight: 1.5 }}
+                  onFocus={(e) => (e.target.style.borderColor = ACCENT)}
+                  onBlur={(e) => (e.target.style.borderColor = BORDER)} />
+                <p style={{ fontSize: 12, color: MUTED, marginTop: 6 }}>One name per line. Add a rating after a comma or tab, optional.</p>
+                <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                  <button type="button" onClick={applyPastedPlayers}
+                    style={{ backgroundColor: ACCENT, color: '#09080a', fontWeight: 800, border: 'none', borderRadius: 10, padding: '10px 18px', fontSize: 14, cursor: 'pointer' }}>
+                    Add players
+                  </button>
+                  <button type="button" onClick={() => { setPasteMode(false); setPasteText('') }}
+                    style={{ backgroundColor: 'transparent', border: `1px solid ${BORDER}`, color: MUTED, borderRadius: 10, padding: '10px 16px', fontSize: 14, cursor: 'pointer' }}>
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {players.map((p, i) => {
+                  const dup = isDuplicate(p.name)
+                  const isLast = i === players.length - 1
+                  const defaultBorder = dup ? '#ef4444' : isLast ? DIM : BORDER
+                  return (
+                  <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <input type="text" value={p.name} onChange={(e) => updatePlayer(i, 'name', e.target.value)}
+                      placeholder={isLast ? '+ Add player…' : `Player ${i + 1}`}
+                      style={{ ...inputStyle(CARD, defaultBorder, TEXT, MUTED), flex: 1, minWidth: 0, fontStyle: isLast && !p.name ? 'italic' : 'normal' }}
+                      onFocus={(e) => (e.target.style.borderColor = dup ? '#ef4444' : ACCENT)}
+                      onBlur={(e) => (e.target.style.borderColor = defaultBorder)} />
+                    <input type="number" value={p.rating} onChange={(e) => updatePlayer(i, 'rating', e.target.value)}
+                      placeholder="Rtg"
+                      style={{ ...inputStyle(CARD, DIM, TEXT, MUTED), width: 68 }}
+                      onFocus={(e) => (e.target.style.borderColor = ACCENT)}
+                      onBlur={(e) => (e.target.style.borderColor = DIM)} />
+                    <div style={{ width: 24 }}>
+                      {i < players.length - 1 && players.length > 2 && (
+                        <button type="button" onClick={() => removePlayer(i)}
+                          style={{ background: 'none', border: 'none', color: MUTED, fontSize: 20, cursor: 'pointer', lineHeight: 1, padding: 0 }}>×</button>
+                      )}
+                    </div>
+                  </div>
+                  )}
+                )}
+              </div>
+            )}
           </Field>
 
           {/* Rounds */}

@@ -20,6 +20,64 @@ export type Pairing =
   | { type: 'game'; whiteId: string; blackId: string }
   | { type: 'bye'; playerId: string }
 
+export type NumberedPairing = Pairing & { boardNumber: number | null }
+
+/**
+ * Assigns display board numbers to a round's pairings, honoring players'
+ * pinned "fixedBoard" preference (for streamers whose equipment can't move).
+ * A fixed player's game always lands on their board number; everything else
+ * fills the remaining numbers in order, starting from 1.
+ *
+ * If two different games each have a fixed-board player wanting the SAME
+ * number, the earlier pairing (by array order) keeps it and the other falls
+ * back to the next available number - a rare, unresolvable clash, not
+ * something we block on.
+ *
+ * If a fixed player's own game has BOTH players pinned to different boards
+ * (i.e. two streamers paired against each other), the lower of the two
+ * numbers wins for that single shared game.
+ */
+export function assignBoardNumbers(
+  pairings: Pairing[],
+  players: Array<{ id: string; fixedBoard: number | null }>
+): NumberedPairing[] {
+  const fixedById = new Map(
+    players.filter((p) => p.fixedBoard != null).map((p) => [p.id, p.fixedBoard as number])
+  )
+
+  const desired = new Map<number, number>()
+  pairings.forEach((p, i) => {
+    if (p.type !== 'game') return
+    const whiteFixed = fixedById.get(p.whiteId)
+    const blackFixed = fixedById.get(p.blackId)
+    if (whiteFixed != null && blackFixed != null) desired.set(i, Math.min(whiteFixed, blackFixed))
+    else if (whiteFixed != null) desired.set(i, whiteFixed)
+    else if (blackFixed != null) desired.set(i, blackFixed)
+  })
+
+  const used = new Set<number>()
+  const finalBoard = new Map<number, number>()
+  pairings.forEach((_, i) => {
+    const want = desired.get(i)
+    if (want != null && !used.has(want)) {
+      finalBoard.set(i, want)
+      used.add(want)
+    }
+  })
+
+  let next = 1
+  function takeNextAvailable(): number {
+    while (used.has(next)) next++
+    used.add(next)
+    return next++
+  }
+
+  return pairings.map((p, i) => {
+    if (p.type === 'bye') return { ...p, boardNumber: null }
+    return { ...p, boardNumber: finalBoard.get(i) ?? takeNextAvailable() }
+  })
+}
+
 // ── Swiss pairing ─────────────────────────────────────────────────────────────
 
 export function generateRound1Pairings(

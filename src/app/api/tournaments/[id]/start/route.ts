@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { generateRound1Pairings, generateRoundRobinPairings } from '@/lib/swiss'
+import { generateRound1Pairings, generateRoundRobinPairings, assignBoardNumbers } from '@/lib/swiss'
 
 export async function POST(
   req: NextRequest,
@@ -24,16 +24,17 @@ export async function POST(
   const pairings = isRR
     ? generateRoundRobinPairings(tournament.players, 1, tournament.format === 'drr')
     : generateRound1Pairings(tournament.players)
+  const numberedPairings = assignBoardNumbers(pairings, tournament.players)
 
   const round = await prisma.round.create({
     data: {
       tournamentId: id,
       number: 1,
       games: {
-        create: pairings.map((p) =>
+        create: numberedPairings.map((p) =>
           p.type === 'bye'
             ? { byePlayerId: p.playerId, result: 'bye' }
-            : { whitePlayerId: p.whiteId, blackPlayerId: p.blackId }
+            : { whitePlayerId: p.whiteId, blackPlayerId: p.blackId, boardNumber: p.boardNumber }
         ),
       },
     },

@@ -16,7 +16,9 @@ import {
   generateRound1Pairings,
   generatePairings,
   generateRoundRobinPairings,
+  assignBoardNumbers,
   type PairingPlayer,
+  type Pairing,
 } from './swiss'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -407,5 +409,105 @@ describe('Round Robin pairings (circle method)', () => {
       }
       expect(allMatchUps.size).toBe(3)
     })
+  })
+})
+
+// ─── Board number assignment ─────────────────────────────────────────────────
+
+describe('Fixed board numbers', () => {
+  it('assigns boards 1..N in pairing order when nobody has a fixed board', () => {
+    const pairings: Pairing[] = [
+      { type: 'game', whiteId: 'A', blackId: 'B' },
+      { type: 'game', whiteId: 'C', blackId: 'D' },
+    ]
+    const players = [
+      { id: 'A', fixedBoard: null },
+      { id: 'B', fixedBoard: null },
+      { id: 'C', fixedBoard: null },
+      { id: 'D', fixedBoard: null },
+    ]
+    const result = assignBoardNumbers(pairings, players)
+    expect(result.map((p) => p.boardNumber)).toEqual([1, 2])
+  })
+
+  it('gives a fixed-board player their pinned number regardless of pairing order', () => {
+    // Streamer C is fixed to board 1, but their game is generated second
+    const pairings: Pairing[] = [
+      { type: 'game', whiteId: 'A', blackId: 'B' },
+      { type: 'game', whiteId: 'C', blackId: 'D' },
+    ]
+    const players = [
+      { id: 'A', fixedBoard: null },
+      { id: 'B', fixedBoard: null },
+      { id: 'C', fixedBoard: 1 },
+      { id: 'D', fixedBoard: null },
+    ]
+    const result = assignBoardNumbers(pairings, players)
+    // C/D's game keeps board 1; A/B's game fills the next available number (2)
+    expect(result[1].boardNumber).toBe(1)
+    expect(result[0].boardNumber).toBe(2)
+  })
+
+  it('keeps a fixed board stable across different opponents round to round', () => {
+    const players = [
+      { id: 'streamer', fixedBoard: 1 },
+      { id: 'opponent1', fixedBoard: null },
+    ]
+    const round1: Pairing[] = [{ type: 'game', whiteId: 'streamer', blackId: 'opponent1' }]
+    const round2: Pairing[] = [{ type: 'game', whiteId: 'opponent1', blackId: 'streamer' }]
+    expect(assignBoardNumbers(round1, players)[0].boardNumber).toBe(1)
+    expect(assignBoardNumbers(round2, players)[0].boardNumber).toBe(1)
+  })
+
+  it('resolves two fixed players paired against each other by taking the lower board', () => {
+    const pairings: Pairing[] = [{ type: 'game', whiteId: 'A', blackId: 'B' }]
+    const players = [
+      { id: 'A', fixedBoard: 5 },
+      { id: 'B', fixedBoard: 2 },
+    ]
+    const result = assignBoardNumbers(pairings, players)
+    expect(result[0].boardNumber).toBe(2)
+  })
+
+  it('falls back the later game to the next open number when two different games both want the same fixed board', () => {
+    // Two separate streamers both pinned to board 1, playing different opponents this round
+    const pairings: Pairing[] = [
+      { type: 'game', whiteId: 'streamer1', blackId: 'x' },
+      { type: 'game', whiteId: 'streamer2', blackId: 'y' },
+    ]
+    const players = [
+      { id: 'streamer1', fixedBoard: 1 },
+      { id: 'x', fixedBoard: null },
+      { id: 'streamer2', fixedBoard: 1 },
+      { id: 'y', fixedBoard: null },
+    ]
+    const result = assignBoardNumbers(pairings, players)
+    expect(result[0].boardNumber).toBe(1)
+    expect(result[1].boardNumber).toBe(2)
+  })
+
+  it('gives byes a null board number and never lets them consume a number', () => {
+    const pairings: Pairing[] = [
+      { type: 'game', whiteId: 'A', blackId: 'B' },
+      { type: 'bye', playerId: 'C' },
+    ]
+    const players = [
+      { id: 'A', fixedBoard: null },
+      { id: 'B', fixedBoard: null },
+      { id: 'C', fixedBoard: null },
+    ]
+    const result = assignBoardNumbers(pairings, players)
+    expect(result[0].boardNumber).toBe(1)
+    expect(result[1].boardNumber).toBeNull()
+  })
+
+  it('lets a fixed board number exceed the number of games in play (organiser knows their room layout)', () => {
+    const pairings: Pairing[] = [{ type: 'game', whiteId: 'A', blackId: 'B' }]
+    const players = [
+      { id: 'A', fixedBoard: 7 },
+      { id: 'B', fixedBoard: null },
+    ]
+    const result = assignBoardNumbers(pairings, players)
+    expect(result[0].boardNumber).toBe(7)
   })
 })

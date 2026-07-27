@@ -3,6 +3,7 @@ export type TournamentPlayer = {
   name: string
   rating: number | null
   seed: number
+  fixedBoard: number | null
 }
 
 export type TournamentGame = {
@@ -13,6 +14,7 @@ export type TournamentGame = {
   result: string | null
   pendingResult: string | null
   pendingBy: string | null
+  boardNumber: number | null
 }
 
 export type TournamentRound = {

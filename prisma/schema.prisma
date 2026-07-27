@@ -25,6 +25,7 @@ model Player {
   name         String
   rating       Int?
   seed         Int
+  fixedBoard   Int?
   whiteGames   Game[]     @relation("WhitePlayer")
   blackGames   Game[]     @relation("BlackPlayer")
   byeGames     Game[]     @relation("ByePlayer")
@@ -52,4 +53,5 @@ model Game {
   result        String?
   pendingResult String?
   pendingBy     String?
+  boardNumber   Int?
 }

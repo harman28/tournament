@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import type { TournamentData, TournamentGame, StandingRow } from '@/lib/types'
+import type { TournamentData, TournamentGame, TournamentPlayer, StandingRow } from '@/lib/types'
 
 const BG     = '#09080a'
 const CARD   = '#130f08'
@@ -104,6 +104,14 @@ export default function TournamentView({ tournament, standings, adminToken }: Pr
     await fetch(`/api/tournaments/${tournament.id}/games/${gameId}/approve`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ adminToken, reject }),
+    })
+    router.refresh()
+  }
+
+  async function setFixedBoard(playerId: string, fixedBoard: number | null) {
+    await fetch(`/api/tournaments/${tournament.id}/players/${playerId}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ adminToken, fixedBoard }),
     })
     router.refresh()
   }
@@ -250,7 +258,9 @@ export default function TournamentView({ tournament, standings, adminToken }: Pr
             ) : (
               <>
                 <div style={{ textAlign: 'center', marginBottom: 28 }}>
-                  <p style={{ color: MUTED, fontSize: 16, marginBottom: 20 }}>Waiting for the organiser to start…</p>
+                  <div style={{ fontSize: 44, marginBottom: 12 }}>⏳</div>
+                  <h2 style={{ fontSize: 22, fontWeight: 800, color: TEXT, margin: '0 0 8px' }}>Waiting for the organiser to start…</h2>
+                  <p style={{ color: MUTED, lineHeight: 1.6 }}>{tournament.players.length} players · {tournament.numRounds} rounds · {formatLabel}</p>
                 </div>
                 {/* Show player list */}
                 <div style={{ backgroundColor: CARD, border: `1px solid ${BORDER}`, borderRadius: 14, overflow: 'hidden' }}>
@@ -309,7 +319,7 @@ export default function TournamentView({ tournament, standings, adminToken }: Pr
                 </div>
               )}
               {tab === 'standings' && (
-                <StandingsTable standings={standings} tournament={tournament} />
+                <StandingsTable standings={standings} tournament={tournament} isAdmin={isAdmin} onSetFixedBoard={setFixedBoard} />
               )}
             </div>
           </div>
@@ -332,7 +342,13 @@ export default function TournamentView({ tournament, standings, adminToken }: Pr
 // ─── Pairings table ───────────────────────────────────────────────────────────
 
 function PairingsTable({ round, isAdmin, onSelect }: { round: TournamentData['rounds'][0]; isAdmin: boolean; onSelect: (g: TournamentGame) => void }) {
-  const regularGames = round.games.filter((g) => !g.byePlayer)
+  // Sort by boardNumber so a fixed-board player's game always lands in the
+  // right physical position, regardless of the order pairings were generated
+  // in. Older rounds created before board numbers existed have boardNumber
+  // = null on every game — those fall back to original pairing order.
+  const regularGames = round.games
+    .filter((g) => !g.byePlayer)
+    .sort((a, b) => (a.boardNumber ?? Infinity) - (b.boardNumber ?? Infinity))
   const byeGames = round.games.filter((g) => g.byePlayer)
 
   return (
@@ -358,9 +374,9 @@ function PairingsTable({ round, isAdmin, onSelect }: { round: TournamentData['ro
             className="row-hover"
             style={{ display: 'grid', gridTemplateColumns: '32px 1fr 72px 1fr', gap: 8, padding: '13px 14px', borderTop: `1px solid ${BORDER}`, alignItems: 'center', width: '100%', background: ROW, border: 'none', borderTopColor: BORDER, borderTopWidth: 1, borderTopStyle: 'solid', cursor: canAct ? 'pointer' : 'default', textAlign: 'left' }}>
 
-            <span style={{ fontSize: 12, color: DIM, fontFamily: 'monospace', fontWeight: 600 }}>{i + 1}</span>
+            <span style={{ fontSize: 12, color: DIM, fontFamily: 'monospace', fontWeight: 600 }}>{game.boardNumber ?? i + 1}</span>
 
-            <span style={{ fontSize: 15, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: isWhiteWin ? ACCENT : isBlackWin ? MUTED : TEXT }}>
+            <span style={{ fontSize: 15, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', ...resultNameStyle(isWhiteWin, isBlackWin) }}>
               {game.white?.name}
             </span>
 
@@ -376,7 +392,7 @@ function PairingsTable({ round, isAdmin, onSelect }: { round: TournamentData['ro
               )}
             </div>
 
-            <span style={{ fontSize: 15, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: isBlackWin ? ACCENT : isWhiteWin ? MUTED : TEXT, textAlign: 'right' }}>
+            <span style={{ fontSize: 15, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'right', ...resultNameStyle(isBlackWin, isWhiteWin) }}>
               {game.black?.name}
             </span>
           </button>
@@ -398,24 +414,27 @@ function PairingsTable({ round, isAdmin, onSelect }: { round: TournamentData['ro
 
 // ─── Standings table ──────────────────────────────────────────────────────────
 
-function StandingsTable({ standings, tournament }: { standings: StandingRow[]; tournament: TournamentData }) {
+function StandingsTable({ standings, tournament, isAdmin, onSetFixedBoard }: { standings: StandingRow[]; tournament: TournamentData; isAdmin: boolean; onSetFixedBoard: (playerId: string, fixedBoard: number | null) => void }) {
   const showRating = tournament.players.some((p) => p.rating != null)
+  const gridCols = isAdmin ? '44px 1fr 52px 52px 60px' : '44px 1fr 52px 52px'
 
   return (
     <div style={{ borderRadius: 16, overflow: 'hidden', border: `1px solid ${BORDER}` }}>
-      <div style={{ display: 'grid', gridTemplateColumns: '44px 1fr 52px 52px', gap: 8, padding: '10px 14px', backgroundColor: CARD, borderBottom: `1px solid ${BORDER}` }}>
-        {['', 'Player', 'Score', 'Buch.'].map((h, i) => (
+      <div style={{ display: 'grid', gridTemplateColumns: gridCols, gap: 8, padding: '10px 14px', backgroundColor: CARD, borderBottom: `1px solid ${BORDER}` }}>
+        {(isAdmin ? ['', 'Player', 'Score', 'Buch.', 'Board'] : ['', 'Player', 'Score', 'Buch.']).map((h, i) => (
           <span key={i} style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: MUTED, textAlign: i >= 2 ? 'right' : 'left' }}>{h}</span>
         ))}
       </div>
 
-      {standings.map((row, i) => {
+      {standings.map((row) => {
         const isWinner = tournament.status === 'complete' && row.rank === 1
-        const medal = row.rank === 1 ? '🥇' : row.rank === 2 ? '🥈' : row.rank === 3 ? '🥉' : null
+        const medal = tournament.status === 'complete'
+          ? (row.rank === 1 ? '🥇' : row.rank === 2 ? '🥈' : row.rank === 3 ? '🥉' : null)
+          : null
 
         return (
           <div key={row.player.id}
-            style={{ display: 'grid', gridTemplateColumns: '44px 1fr 52px 52px', gap: 8, padding: '13px 14px', borderTop: `1px solid ${BORDER}`, alignItems: 'center', backgroundColor: isWinner ? `${ACCENT}0f` : ROW }}>
+            style={{ display: 'grid', gridTemplateColumns: gridCols, gap: 8, padding: '13px 14px', borderTop: `1px solid ${BORDER}`, alignItems: 'center', backgroundColor: isWinner ? `${ACCENT}0f` : ROW }}>
             <span style={{ fontSize: medal ? 20 : 13, color: MUTED, fontFamily: medal ? 'inherit' : 'monospace', fontWeight: 600 }}>
               {medal ?? row.rank}
             </span>
@@ -427,10 +446,47 @@ function StandingsTable({ standings, tournament }: { standings: StandingRow[]; t
               <span style={{ fontSize: 20, fontWeight: 900, color: isWinner ? ACCENT : TEXT }}>{scoreStr(row.score)}</span>
             </div>
             <div style={{ textAlign: 'right', fontSize: 13, color: MUTED, fontFamily: 'monospace' }}>{scoreStr(row.buchholz)}</div>
+            {isAdmin && (
+              <div style={{ textAlign: 'right' }}>
+                <BoardPin player={row.player} onSet={(v) => onSetFixedBoard(row.player.id, v)} />
+              </div>
+            )}
           </div>
         )
       })}
     </div>
+  )
+}
+
+// A pinned board number keeps a player (e.g. a streamer whose camera can't
+// move) on the same physical board every round, regardless of who they're
+// paired against — see assignBoardNumbers() in lib/swiss.ts.
+function BoardPin({ player, onSet }: { player: TournamentPlayer; onSet: (v: number | null) => void }) {
+  const [editing, setEditing] = useState(false)
+  const [val, setVal] = useState(player.fixedBoard != null ? String(player.fixedBoard) : '')
+
+  function commit() {
+    const trimmed = val.trim()
+    onSet(trimmed ? parseInt(trimmed, 10) : null)
+    setEditing(false)
+  }
+
+  if (editing) {
+    return (
+      <div style={{ display: 'flex', gap: 4, alignItems: 'center', justifyContent: 'flex-end' }}>
+        <input type="number" value={val} onChange={(e) => setVal(e.target.value)} autoFocus min={1}
+          style={{ width: 40, backgroundColor: BG, border: `1px solid ${ACCENT}`, borderRadius: 6, padding: '3px 4px', color: TEXT, fontSize: 12, textAlign: 'center', outline: 'none' }}
+          onKeyDown={(e) => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false) }}
+          onBlur={commit} />
+      </div>
+    )
+  }
+
+  return (
+    <button type="button" onClick={() => setEditing(true)} title="Fix this player's board number"
+      style={{ background: 'none', border: 'none', color: player.fixedBoard ? ACCENT : MUTED, fontSize: 12, fontWeight: 700, cursor: 'pointer', padding: 0, opacity: player.fixedBoard ? 1 : 0.5 }}>
+      {player.fixedBoard ? `📌${player.fixedBoard}` : '📌'}
+    </button>
   )
 }
 
@@ -500,6 +556,14 @@ function ResultModal({ game, isAdmin, onClose, onSubmit }: { game: TournamentGam
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+// Winner and loser need to read as unmistakably different at a glance, not just
+// a subtle color shift — winner bold and bright, loser visibly faded down.
+function resultNameStyle(isWin: boolean, isLoss: boolean): React.CSSProperties {
+  if (isWin) return { color: ACCENT, fontWeight: 800 }
+  if (isLoss) return { color: MUTED, fontWeight: 500, opacity: 0.55 }
+  return { color: TEXT, fontWeight: 700 }
+}
 
 function NavBtn({ onClick, disabled, children }: { onClick: () => void; disabled: boolean; children: React.ReactNode }) {
   return (
