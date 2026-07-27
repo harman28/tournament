@@ -461,6 +461,20 @@ function StandingsTable({ standings, tournament, isAdmin, onSetFixedBoard }: { s
 // A pinned board number keeps a player (e.g. a streamer whose camera can't
 // move) on the same physical board every round, regardless of who they're
 // paired against — see assignBoardNumbers() in lib/swiss.ts.
+// A plain vector icon, not an emoji: 📌 is a full-color glyph that ignores
+// `color` and has odd baseline/size metrics next to a text digit, which is
+// what made the pin+number pairing look misaligned and jump around between
+// rows of different digit-widths. This one always matches the text color
+// and lines up with the number exactly like the app's other icon buttons.
+function PinIcon({ filled }: { filled: boolean }) {
+  return (
+    <svg viewBox="0 0 24 24" fill={filled ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="12" height="12">
+      <circle cx="12" cy="9" r="5" />
+      <line x1="12" y1="14" x2="12" y2="21" />
+    </svg>
+  )
+}
+
 function BoardPin({ player, onSet }: { player: TournamentPlayer; onSet: (v: number | null) => void }) {
   const [editing, setEditing] = useState(false)
   const [val, setVal] = useState(player.fixedBoard != null ? String(player.fixedBoard) : '')
@@ -473,19 +487,25 @@ function BoardPin({ player, onSet }: { player: TournamentPlayer; onSet: (v: numb
 
   if (editing) {
     return (
-      <div style={{ display: 'flex', gap: 4, alignItems: 'center', justifyContent: 'flex-end' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3 }}>
         <input type="number" value={val} onChange={(e) => setVal(e.target.value)} autoFocus min={1}
-          style={{ width: 40, backgroundColor: BG, border: `1px solid ${ACCENT}`, borderRadius: 6, padding: '3px 4px', color: TEXT, fontSize: 12, textAlign: 'center', outline: 'none' }}
+          style={{ width: 44, backgroundColor: BG, border: `1px solid ${ACCENT}`, borderRadius: 6, padding: '3px 4px', color: TEXT, fontSize: 12, textAlign: 'center', outline: 'none' }}
           onKeyDown={(e) => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false) }}
           onBlur={commit} />
+        {/* A pin never affects the round already in progress - only calls this
+            out here, at the moment it's set, so it doesn't read as "nothing
+            happened" when the current round's pairings don't change. */}
+        <span style={{ fontSize: 9, color: MUTED, whiteSpace: 'nowrap', lineHeight: 1 }}>from next round</span>
       </div>
     )
   }
 
   return (
-    <button type="button" onClick={() => setEditing(true)} title="Fix this player's board number"
-      style={{ background: 'none', border: 'none', color: player.fixedBoard ? ACCENT : MUTED, fontSize: 12, fontWeight: 700, cursor: 'pointer', padding: 0, opacity: player.fixedBoard ? 1 : 0.5 }}>
-      {player.fixedBoard ? `📌${player.fixedBoard}` : '📌'}
+    <button type="button" onClick={() => setEditing(true)}
+      title={player.fixedBoard ? `Fixed to board ${player.fixedBoard} - applies from next round` : "Fix this player's board number"}
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: 'none', border: 'none', color: player.fixedBoard ? ACCENT : MUTED, fontSize: 12, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer', padding: 0, opacity: player.fixedBoard ? 1 : 0.5 }}>
+      <PinIcon filled={!!player.fixedBoard} />
+      {player.fixedBoard ?? ''}
     </button>
   )
 }
