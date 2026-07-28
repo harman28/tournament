@@ -155,6 +155,47 @@ describe('State guards', () => {
     expect(body.error).toBe('No tie for 1st place')
   })
 
+  it('still detects a tie for 1st when scores match but Buchholz differs (regression: tied means same score, not same computeStandings rank)', async () => {
+    // Alice and Bob both score 2, but Alice's opponents (Carol=1, Dave=1) ended
+    // up stronger than Bob's (Carol=1, Eve=0), so Alice's Buchholz (2) beats
+    // Bob's (1) - computeStandings ranks them 1st/2nd, NOT a shared rank 1.
+    // They're still tied for this feature's purposes.
+    givenTournamentExists({
+      players: [
+        { id: 'Alice', seed: 1, rating: null, name: 'Alice', fixedBoard: null },
+        { id: 'Bob',   seed: 2, rating: null, name: 'Bob',   fixedBoard: null },
+        { id: 'Carol', seed: 3, rating: null, name: 'Carol', fixedBoard: null },
+        { id: 'Dave',  seed: 4, rating: null, name: 'Dave',  fixedBoard: null },
+        { id: 'Eve',   seed: 5, rating: null, name: 'Eve',   fixedBoard: null },
+      ],
+      rounds: [
+        { id: 'r1', number: 1, status: 'complete', isTiebreaker: false, tiebreakAttempt: null, games: [
+          game('g1', 'r1', 'Alice', 'Carol', '1-0'),
+          game('g2', 'r1', 'Bob',   'Carol', '1-0'),
+        ] },
+        { id: 'r2', number: 2, status: 'complete', isTiebreaker: false, tiebreakAttempt: null, games: [
+          game('g3', 'r2', 'Alice', 'Dave',  '1-0'),
+          game('g4', 'r2', 'Bob',   'Eve',   '1-0'),
+        ] },
+        { id: 'r3', number: 3, status: 'complete', isTiebreaker: false, tiebreakAttempt: null, games: [
+          game('g5', 'r3', 'Carol', 'Eve',   '1-0'),
+          game('g6', 'r3', 'Dave',  'Eve',   '1-0'),
+        ] },
+      ],
+    })
+    vi.mocked(prisma.round.create).mockResolvedValueOnce({ id: 'tb1' } as any)
+
+    const response = await POST(tiebreakerRequest(ADMIN_TOKEN), params(TOURNAMENT_ID))
+    const body     = await response.json()
+
+    expect(response.status).toBe(200)
+    expect(body.started).toBe(true)
+    const roundData = vi.mocked(prisma.round.create).mock.calls[0][0].data
+    const games = roundData.games.create as any[]
+    const participants = games.flatMap((g) => [g.whitePlayerId, g.blackPlayerId]).sort()
+    expect(participants).toEqual(['Alice', 'Bob'])
+  })
+
   it('returns 400 when a tiebreaker attempt is already in progress (incomplete)', async () => {
     givenTournamentExists({
       rounds: [

@@ -2,12 +2,21 @@ import type { Player, Game } from '@prisma/client'
 import type { Standing } from './standings'
 import { prisma } from './prisma'
 
-// Tiebreakers only ever resolve a tie for RANK 1 (determining the outright
+// Tiebreakers only ever resolve a tie for 1st place (determining the outright
 // winner) - ties further down the standings stay as-is, resolved by Buchholz
 // like today. See tournament/CLAUDE.md for the full design rationale.
-
+//
+// "Tied" here means tied on SCORE, not on computeStandings' shared `rank`.
+// computeStandings only shares a rank when score, Buchholz, AND wins all
+// match - but Buchholz/wins are themselves just a mathematical tiebreak
+// method, and the whole point of this feature is to let the organiser settle
+// the top spot on the board instead of by that math. Two players on the same
+// score with different Buchholz still need a tiebreaker match, even though
+// computeStandings already ranks them 1st/2nd.
 export function tiedForFirst(standings: Standing[]): Player[] {
-  return standings.filter((s) => s.rank === 1).map((s) => s.player)
+  if (standings.length === 0) return []
+  const maxScore = Math.max(...standings.map((s) => s.score))
+  return standings.filter((s) => s.score === maxScore).map((s) => s.player)
 }
 
 type MinimalGame = Pick<Game, 'whitePlayerId' | 'blackPlayerId' | 'byePlayerId' | 'result'>

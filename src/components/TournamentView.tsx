@@ -56,7 +56,13 @@ export default function TournamentView({ tournament, standings, adminToken }: Pr
   const currentAttemptRounds = tiebreakRounds.filter((r) => r.tiebreakAttempt === latestAttempt)
   const currentAttemptGames = currentAttemptRounds.flatMap((r) => r.games)
   const currentAttemptComplete = currentAttemptRounds.length > 0 && currentAttemptGames.every((g) => !!g.result)
-  const tiedForFirst = tournament.status === 'complete' ? standings.filter((s) => s.rank === 1) : []
+  // "Tied for 1st" means tied on SCORE, not standings' shared `rank` - rank
+  // only matches when score, Buchholz, AND wins all tie, but Buchholz/wins
+  // are themselves just a tiebreak method the organiser wants to be able to
+  // override with an actual game. Mirrors lib/tiebreak.ts's tiedForFirst
+  // (duplicated, not imported - see currentTiebreakGroup below for why).
+  const topScore = tournament.status === 'complete' && standings.length > 0 ? Math.max(...standings.map((s) => s.score)) : null
+  const tiedForFirst = topScore !== null ? standings.filter((s) => s.score === topScore) : []
 
   useEffect(() => {
     const t = setInterval(() => router.refresh(), 30_000)

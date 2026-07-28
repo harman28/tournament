@@ -1,8 +1,13 @@
 /**
  * Tiebreaker resolution logic
  *
- * A tiebreaker only ever exists to resolve a tie for RANK 1 (determining the
- * outright winner). resolveTiebreakAttempt() is deliberately score-only - it
+ * A tiebreaker only ever exists to resolve a tie for 1st place (determining
+ * the outright winner) - "tied" means tied on SCORE, not on computeStandings'
+ * shared `rank` (which only matches when score, Buchholz, AND wins all tie).
+ * Two players on the same score but different Buchholz are still a tie for
+ * this feature's purposes, even though computeStandings already ranks them
+ * 1st/2nd - the whole point is letting the organiser settle it on the board
+ * instead of by that math. resolveTiebreakAttempt() is deliberately score-only - it
  * must NOT reuse computeStandings' Buchholz/wins tiebreak chain, because:
  *
  *   - Buchholz is mathematically constant for everyone inside a closed group
@@ -63,6 +68,20 @@ describe('tiedForFirst', () => {
     const a = player('A', 1), b = player('B', 2), c = player('C', 3)
     const standings = [standing(a, 3, 1), standing(b, 1, 2), standing(c, 1, 2)]
     expect(tiedForFirst(standings).map((p) => p.id)).toEqual(['A'])
+  })
+
+  it('includes a same-score pair even when computeStandings already ranked them 1st/2nd by Buchholz', () => {
+    // This is the regression case: computeStandings' shared-rank logic
+    // requires score AND buchholz AND wins to all match, so a same-score,
+    // different-Buchholz pair gets ranks 1 and 2 - but they're still tied on
+    // score, which is what this feature is actually supposed to detect.
+    const a = player('A', 1), b = player('B', 2), c = player('C', 3)
+    const standings: Standing[] = [
+      { player: a, score: 2, buchholz: 3, wins: 2, gamesPlayed: 3, rank: 1 },
+      { player: b, score: 2, buchholz: 1, wins: 1, gamesPlayed: 3, rank: 2 },
+      { player: c, score: 1, buchholz: 2, wins: 0, gamesPlayed: 3, rank: 3 },
+    ]
+    expect(tiedForFirst(standings).map((p) => p.id).sort()).toEqual(['A', 'B'])
   })
 })
 
