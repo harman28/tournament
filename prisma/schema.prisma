@@ -7,37 +7,42 @@ datasource db {
 }
 
 model Tournament {
-  id         String   @id
-  adminToken String   @unique
-  name       String
-  format     String   @default("swiss")
-  numRounds  Int
-  status     String   @default("setup")
-  createdAt  DateTime @default(now())
-  players    Player[]
-  rounds     Round[]
+  id               String   @id
+  adminToken       String   @unique
+  name             String
+  format           String   @default("swiss")
+  numRounds        Int
+  status           String   @default("setup")
+  createdAt        DateTime @default(now())
+  players          Player[]
+  rounds           Round[]
+  tiebreakWinnerId String?
+  tiebreakWinner   Player?  @relation("TiebreakWinner", fields: [tiebreakWinnerId], references: [id])
 }
 
 model Player {
-  id           String     @id @default(cuid())
-  tournamentId String
-  tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
-  name         String
-  rating       Int?
-  seed         Int
-  fixedBoard   Int?
-  whiteGames   Game[]     @relation("WhitePlayer")
-  blackGames   Game[]     @relation("BlackPlayer")
-  byeGames     Game[]     @relation("ByePlayer")
+  id               String       @id @default(cuid())
+  tournamentId     String
+  tournament       Tournament   @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  name             String
+  rating           Int?
+  seed             Int
+  fixedBoard       Int?
+  whiteGames       Game[]       @relation("WhitePlayer")
+  blackGames       Game[]       @relation("BlackPlayer")
+  byeGames         Game[]       @relation("ByePlayer")
+  tiebreakWinnerOf Tournament[] @relation("TiebreakWinner")
 }
 
 model Round {
-  id           String     @id @default(cuid())
-  tournamentId String
-  tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
-  number       Int
-  status       String     @default("active")
-  games        Game[]
+  id              String     @id @default(cuid())
+  tournamentId    String
+  tournament      Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  number          Int
+  status          String     @default("active")
+  isTiebreaker    Boolean    @default(false)
+  tiebreakAttempt Int?
+  games           Game[]
 }
 
 model Game {

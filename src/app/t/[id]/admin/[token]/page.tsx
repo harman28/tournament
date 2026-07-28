@@ -29,8 +29,10 @@ export default async function AdminPage({
   if (!tournament) notFound()
   if (tournament.adminToken !== token) redirect(`/t/${id}`)
 
-  const allGames = tournament.rounds.flatMap((r) => r.games)
-  const standings = computeStandings(tournament.players, allGames)
+  // Tiebreaker rounds must never affect the main Score/Buchholz columns -
+  // only the main rounds feed the standings calculation.
+  const mainGames = tournament.rounds.filter((r) => !r.isTiebreaker).flatMap((r) => r.games)
+  const standings = computeStandings(tournament.players, mainGames)
 
   return (
     <TournamentView tournament={tournament} standings={standings} adminToken={token} />

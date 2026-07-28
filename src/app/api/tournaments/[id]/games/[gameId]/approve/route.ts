@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { maybeResolveTiebreak } from '@/lib/tiebreak'
 
 export async function POST(
   req: NextRequest,
@@ -37,6 +38,7 @@ export async function POST(
         pendingBy: null,
       },
     })
+    if (game.round.isTiebreaker) await maybeResolveTiebreak(gameId)
   }
 
   return Response.json({ ok: true })

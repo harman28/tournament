@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { maybeResolveTiebreak } from '@/lib/tiebreak'
 
 const VALID_RESULTS = ['1-0', '0-1', '1/2-1/2']
 
@@ -65,6 +66,8 @@ export async function PATCH(
     where: { id: gameId },
     data: { result, pendingResult: null, pendingBy: null },
   })
+
+  if (game.round.isTiebreaker) await maybeResolveTiebreak(gameId)
 
   return Response.json({ ok: true })
 }

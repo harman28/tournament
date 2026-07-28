@@ -21,6 +21,8 @@ export type TournamentRound = {
   id: string
   number: number
   status: string
+  isTiebreaker: boolean
+  tiebreakAttempt: number | null
   games: TournamentGame[]
 }
 
@@ -42,4 +44,5 @@ export type TournamentData = {
   status: string
   players: TournamentPlayer[]
   rounds: TournamentRound[]
+  tiebreakWinnerId: string | null
 }

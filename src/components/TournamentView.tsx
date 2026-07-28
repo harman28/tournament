@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import type { TournamentData, TournamentGame, TournamentPlayer, StandingRow } from '@/lib/types'
+import type { TournamentData, TournamentGame, TournamentPlayer, TournamentRound, StandingRow } from '@/lib/types'
 
 const BG     = '#09080a'
 const CARD   = '#130f08'
@@ -14,7 +14,7 @@ const MUTED  = '#b89b6c'
 const TEXT   = '#f8f0dd'
 const DIM    = '#96803f'
 
-type Tab = 'pairings' | 'results' | 'standings'
+type Tab = 'pairings' | 'standings'
 
 type Props = {
   tournament: TournamentData
@@ -29,17 +29,34 @@ export default function TournamentView({ tournament, standings, adminToken }: Pr
   const defaultTab: Tab = tournament.status === 'complete' ? 'standings' : 'pairings'
   const [tab, setTab] = useState<Tab>(defaultTab)
   const [modal, setModal] = useState<TournamentGame | null>(null)
+  const [profilePlayerId, setProfilePlayerId] = useState<string | null>(null)
   const [actionLoading, setActionLoading] = useState(false)
   const [copied, setCopied] = useState(false)
-  const [resultsRound, setResultsRound] = useState(1)
+  const [viewRound, setViewRound] = useState(1)
   // Optimistic results: applied immediately, cleared on server refresh
   const [optimistic, setOptimistic] = useState<Record<string, string>>({})
 
-  const currentRound = tournament.rounds[tournament.rounds.length - 1]
-  const roundsComplete = tournament.rounds.filter((r) => r.status === 'complete').length
+  // Tiebreaker rounds are always appended after all main rounds by number/
+  // construction - the existing round-progress header must only ever look at
+  // mainRounds, or it breaks the moment a tiebreaker round exists (e.g. shows
+  // "Round 8 / 7").
+  const mainRounds = tournament.rounds.filter((r) => !r.isTiebreaker)
+  const currentRound = mainRounds[mainRounds.length - 1]
+  const roundsComplete = mainRounds.filter((r) => r.status === 'complete').length
   const currentRoundComplete = currentRound?.games.every((g) => !!g.result)
-  const allDone = currentRoundComplete && tournament.rounds.length >= tournament.numRounds
+  const allDone = currentRoundComplete && mainRounds.length >= tournament.numRounds
   const pendingGames = tournament.rounds.flatMap((r) => r.games).filter((g) => g.pendingResult && !g.result)
+
+  // Tiebreaker state. Nothing ever flips a tiebreaker Round.status to
+  // "complete" the way next-round does for main rounds (they're all
+  // pre-created as a full round-robin at once), so completion is always
+  // derived from every game having a result, never from .status.
+  const tiebreakRounds = tournament.rounds.filter((r) => r.isTiebreaker)
+  const latestAttempt = tiebreakRounds.length ? Math.max(...tiebreakRounds.map((r) => r.tiebreakAttempt ?? 0)) : 0
+  const currentAttemptRounds = tiebreakRounds.filter((r) => r.tiebreakAttempt === latestAttempt)
+  const currentAttemptGames = currentAttemptRounds.flatMap((r) => r.games)
+  const currentAttemptComplete = currentAttemptRounds.length > 0 && currentAttemptGames.every((g) => !!g.result)
+  const tiedForFirst = tournament.status === 'complete' ? standings.filter((s) => s.rank === 1) : []
 
   useEffect(() => {
     const t = setInterval(() => router.refresh(), 30_000)
@@ -51,9 +68,14 @@ export default function TournamentView({ tournament, standings, adminToken }: Pr
     setOptimistic({})
   }, [tournament])
 
+  // Auto-jump the Pairings tab to whichever round was created most recently -
+  // including a tiebreaker round, which is why this uses tournament.rounds
+  // (the full list) rather than currentRound (main rounds only, used solely
+  // for the round-progress header/next-round button logic above).
+  const latestRound = tournament.rounds[tournament.rounds.length - 1]
   useEffect(() => {
-    if (currentRound) setResultsRound(currentRound.number)
-  }, [currentRound?.number])
+    if (latestRound) setViewRound(latestRound.number)
+  }, [latestRound?.number])
 
   const copyLink = useCallback(async () => {
     await navigator.clipboard.writeText(`${window.location.origin}/t/${tournament.id}`)
@@ -80,6 +102,16 @@ export default function TournamentView({ tournament, standings, adminToken }: Pr
     await fetch(`/api/tournaments/${tournament.id}/next-round`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ adminToken }),
+    })
+    router.refresh()
+    setActionLoading(false)
+  }
+
+  async function startTiebreaker(manualWinnerId?: string) {
+    setActionLoading(true)
+    await fetch(`/api/tournaments/${tournament.id}/tiebreaker`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ adminToken, manualWinnerId }),
     })
     router.refresh()
     setActionLoading(false)
@@ -121,7 +153,7 @@ export default function TournamentView({ tournament, standings, adminToken }: Pr
     return games.map((g) => optimistic[g.id] ? { ...g, result: optimistic[g.id] } : g)
   }
 
-  const resultsRoundData = tournament.rounds.find((r) => r.number === resultsRound)
+  const viewRoundData = tournament.rounds.find((r) => r.number === viewRound)
   const formatLabel = tournament.format === 'rr' ? 'Round Robin' : tournament.format === 'drr' ? 'Double Round Robin' : 'Swiss'
 
   return (
@@ -203,11 +235,41 @@ export default function TournamentView({ tournament, standings, adminToken }: Pr
             </div>
             <div style={{ display: 'flex', gap: 4 }}>
               {Array.from({ length: tournament.numRounds }, (_, i) => {
-                const r = tournament.rounds[i]
+                const r = mainRounds[i]
                 return (
                   <div key={i} style={{ flex: 1, height: 5, borderRadius: 3, transition: 'background-color 0.4s', backgroundColor: r?.status === 'complete' ? ACCENT : r?.number === currentRound.number ? `${ACCENT}55` : BORDER }} />
                 )
               })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Tiebreaker progress (independent, parallel block) ────────── */}
+      {tiebreakRounds.length > 0 && (
+        <div style={{ padding: '16px 16px', borderBottom: `1px solid ${BORDER}`, backgroundColor: 'rgba(212,168,83,0.06)' }}>
+          <div style={{ maxWidth: 640, margin: '0 auto' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, gap: 12, flexWrap: 'wrap' }}>
+              <div>
+                <span style={{ fontSize: 20, fontWeight: 900, color: ACCENT, letterSpacing: '-0.3px' }}>🎯 Tiebreaker</span>
+                <span style={{ fontSize: 14, fontWeight: 400, color: MUTED }}> · Attempt {latestAttempt}</span>
+              </div>
+              {isAdmin && !tournament.tiebreakWinnerId && currentAttemptComplete && (
+                <button onClick={() => startTiebreaker()} disabled={actionLoading}
+                  style={{ backgroundColor: ACCENT, color: BG, fontWeight: 800, border: 'none', borderRadius: 10, padding: '9px 16px', fontSize: 13, cursor: actionLoading ? 'not-allowed' : 'pointer', opacity: actionLoading ? 0.6 : 1 }}>
+                  {actionLoading ? '…' : 'Still tied — Start Next Attempt →'}
+                </button>
+              )}
+              {tournament.tiebreakWinnerId && (
+                <span style={{ fontSize: 13, fontWeight: 700, color: ACCENT }}>
+                  🏆 {tournament.players.find((p) => p.id === tournament.tiebreakWinnerId)?.name} wins the tiebreaker
+                </span>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: 4 }}>
+              {currentAttemptRounds.map((r) => (
+                <div key={r.id} style={{ flex: 1, height: 5, borderRadius: 3, backgroundColor: r.games.every((g) => !!g.result) ? ACCENT : `${ACCENT}55` }} />
+              ))}
             </div>
           </div>
         </div>
@@ -290,7 +352,7 @@ export default function TournamentView({ tournament, standings, adminToken }: Pr
         <>
           <div style={{ borderBottom: `1px solid ${BORDER}`, padding: '0 16px' }}>
             <div style={{ maxWidth: 640, margin: '0 auto', display: 'flex' }}>
-              {(['pairings', 'results', 'standings'] as Tab[]).map((t) => (
+              {(['pairings', 'standings'] as Tab[]).map((t) => (
                 <button key={t} onClick={() => setTab(t)}
                   style={{ padding: '13px 20px', fontSize: 14, fontWeight: 600, border: 'none', borderBottom: `2px solid ${tab === t ? ACCENT : 'transparent'}`, backgroundColor: 'transparent', color: tab === t ? ACCENT : MUTED, cursor: 'pointer', textTransform: 'capitalize', transition: 'color 0.2s', marginBottom: -1 }}>
                   {t}
@@ -301,25 +363,33 @@ export default function TournamentView({ tournament, standings, adminToken }: Pr
 
           <div style={{ flex: 1, padding: '20px 16px' }}>
             <div style={{ maxWidth: 640, margin: '0 auto' }} className="fade-up" key={tab}>
-              {tab === 'pairings' && currentRound && (
-                <PairingsTable round={{ ...currentRound, games: mergeOptimistic(currentRound.games) }} isAdmin={isAdmin} onSelect={setModal} />
-              )}
-              {tab === 'results' && (
+              {tab === 'pairings' && (
                 <div>
                   {tournament.rounds.length > 1 && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 20 }}>
-                      <NavBtn onClick={() => setResultsRound((r) => Math.max(1, r - 1))} disabled={resultsRound <= 1}>←</NavBtn>
-                      <span style={{ fontWeight: 700, color: TEXT, fontSize: 16 }}>Round {resultsRound}</span>
-                      <NavBtn onClick={() => setResultsRound((r) => Math.min(tournament.rounds.length, r + 1))} disabled={resultsRound >= tournament.rounds.length}>→</NavBtn>
+                      <NavBtn onClick={() => setViewRound((r) => Math.max(1, r - 1))} disabled={viewRound <= 1}>←</NavBtn>
+                      <span style={{ fontWeight: 700, color: TEXT, fontSize: 16 }}>
+                        {viewRoundData?.isTiebreaker ? 'Tiebreaker' : `Round ${viewRound}`}
+                      </span>
+                      <NavBtn onClick={() => setViewRound((r) => Math.min(tournament.rounds.length, r + 1))} disabled={viewRound >= tournament.rounds.length}>→</NavBtn>
                     </div>
                   )}
-                  {resultsRoundData && (
-                    <PairingsTable round={{ ...resultsRoundData, games: mergeOptimistic(resultsRoundData.games) }} isAdmin={isAdmin} onSelect={setModal} />
+                  {viewRoundData && (
+                    <PairingsTable round={{ ...viewRoundData, games: mergeOptimistic(viewRoundData.games) }} isAdmin={isAdmin} onSelect={setModal} onSelectPlayer={setProfilePlayerId} />
                   )}
                 </div>
               )}
               {tab === 'standings' && (
-                <StandingsTable standings={standings} tournament={tournament} isAdmin={isAdmin} onSetFixedBoard={setFixedBoard} />
+                <StandingsTable
+                  standings={standings} tournament={tournament} isAdmin={isAdmin}
+                  onSetFixedBoard={setFixedBoard} onSelectPlayer={setProfilePlayerId}
+                  tiedForFirst={tiedForFirst.map((s) => s.player)}
+                  latestAttempt={latestAttempt}
+                  currentAttemptGames={currentAttemptGames}
+                  currentAttemptComplete={currentAttemptComplete}
+                  actionLoading={actionLoading}
+                  onStartTiebreaker={startTiebreaker}
+                />
               )}
             </div>
           </div>
@@ -335,13 +405,28 @@ export default function TournamentView({ tournament, standings, adminToken }: Pr
           onSubmit={(result, name) => submitResult(modal.id, result, name)}
         />
       )}
+
+      {/* ── Player profile modal ─────────────────────────────────────── */}
+      {profilePlayerId && (() => {
+        const player = tournament.players.find((p) => p.id === profilePlayerId)
+        const standingRow = standings.find((s) => s.player.id === profilePlayerId)
+        if (!player) return null
+        return (
+          <PlayerProfileModal
+            player={player}
+            standingRow={standingRow}
+            rounds={tournament.rounds}
+            onClose={() => setProfilePlayerId(null)}
+          />
+        )
+      })()}
     </div>
   )
 }
 
 // ─── Pairings table ───────────────────────────────────────────────────────────
 
-function PairingsTable({ round, isAdmin, onSelect }: { round: TournamentData['rounds'][0]; isAdmin: boolean; onSelect: (g: TournamentGame) => void }) {
+function PairingsTable({ round, isAdmin, onSelect, onSelectPlayer }: { round: TournamentData['rounds'][0]; isAdmin: boolean; onSelect: (g: TournamentGame) => void; onSelectPlayer: (playerId: string) => void }) {
   // Sort by boardNumber so a fixed-board player's game always lands in the
   // right physical position, regardless of the order pairings were generated
   // in. Older rounds created before board numbers existed have boardNumber
@@ -376,7 +461,8 @@ function PairingsTable({ round, isAdmin, onSelect }: { round: TournamentData['ro
 
             <span style={{ fontSize: 12, color: DIM, fontFamily: 'monospace', fontWeight: 600 }}>{game.boardNumber ?? i + 1}</span>
 
-            <span style={{ fontSize: 15, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', ...resultNameStyle(isWhiteWin, isBlackWin) }}>
+            <span onClick={(e) => { if (game.white) { e.stopPropagation(); onSelectPlayer(game.white.id) } }}
+              style={{ fontSize: 15, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: game.white ? 'pointer' : 'default', ...resultNameStyle(isWhiteWin, isBlackWin) }}>
               {game.white?.name}
             </span>
 
@@ -392,7 +478,8 @@ function PairingsTable({ round, isAdmin, onSelect }: { round: TournamentData['ro
               )}
             </div>
 
-            <span style={{ fontSize: 15, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'right', ...resultNameStyle(isBlackWin, isWhiteWin) }}>
+            <span onClick={(e) => { if (game.black) { e.stopPropagation(); onSelectPlayer(game.black.id) } }}
+              style={{ fontSize: 15, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'right', cursor: game.black ? 'pointer' : 'default', ...resultNameStyle(isBlackWin, isWhiteWin) }}>
               {game.black?.name}
             </span>
           </button>
@@ -403,7 +490,8 @@ function PairingsTable({ round, isAdmin, onSelect }: { round: TournamentData['ro
       {byeGames.map((game) => (
         <div key={game.id} style={{ display: 'grid', gridTemplateColumns: '32px 1fr 72px 1fr', gap: 8, padding: '13px 14px', borderTop: `1px solid ${BORDER}`, alignItems: 'center', backgroundColor: CARD }}>
           <span style={{ fontSize: 12, color: DIM }}>–</span>
-          <span style={{ color: MUTED, fontWeight: 600, fontSize: 15 }}>{game.byePlayer?.name}</span>
+          <span onClick={() => game.byePlayer && onSelectPlayer(game.byePlayer.id)}
+            style={{ color: MUTED, fontWeight: 600, fontSize: 15, cursor: game.byePlayer ? 'pointer' : 'default' }}>{game.byePlayer?.name}</span>
           <span style={{ textAlign: 'center', color: MUTED, fontSize: 12, fontStyle: 'italic' }}>bye</span>
           <span />
         </div>
@@ -414,11 +502,73 @@ function PairingsTable({ round, isAdmin, onSelect }: { round: TournamentData['ro
 
 // ─── Standings table ──────────────────────────────────────────────────────────
 
-function StandingsTable({ standings, tournament, isAdmin, onSetFixedBoard }: { standings: StandingRow[]; tournament: TournamentData; isAdmin: boolean; onSetFixedBoard: (playerId: string, fixedBoard: number | null) => void }) {
+function StandingsTable({
+  standings, tournament, isAdmin, onSetFixedBoard, onSelectPlayer,
+  tiedForFirst, latestAttempt, currentAttemptGames, currentAttemptComplete, actionLoading, onStartTiebreaker,
+}: {
+  standings: StandingRow[]; tournament: TournamentData; isAdmin: boolean
+  onSetFixedBoard: (playerId: string, fixedBoard: number | null) => void
+  onSelectPlayer: (playerId: string) => void
+  tiedForFirst: TournamentPlayer[]
+  latestAttempt: number
+  currentAttemptGames: TournamentGame[]
+  currentAttemptComplete: boolean
+  actionLoading: boolean
+  onStartTiebreaker: (manualWinnerId?: string) => void
+}) {
   const showRating = tournament.players.some((p) => p.rating != null)
   const gridCols = isAdmin ? '44px 1fr 52px 52px 60px' : '44px 1fr 52px 52px'
+  const hasUnresolvedTie = tournament.status === 'complete' && tiedForFirst.length > 1 && !tournament.tiebreakWinnerId
+  // Narrows the originally-tied group down using the latest attempt's own
+  // results - same score-only logic as lib/tiebreak.ts's resolveTiebreakAttempt,
+  // duplicated here (rather than imported) because that module pulls in the
+  // server-only Prisma client at module scope, which client components can't
+  // bundle. Falls back to the original group whenever the attempt isn't fully
+  // decided yet.
+  const stillTiedGroup = currentTiebreakGroup(tiedForFirst, currentAttemptGames)
 
   return (
+    <div>
+      {hasUnresolvedTie && (
+        <div style={{ marginBottom: 16, padding: '14px 16px', backgroundColor: 'rgba(212,168,83,0.08)', border: `1px solid ${ACCENT}55`, borderRadius: 12 }}>
+          <p style={{ fontSize: 14, color: TEXT, margin: isAdmin ? '0 0 10px' : 0 }}>
+            <strong style={{ color: ACCENT }}>Tied for 1st:</strong> {tiedForFirst.map((p) => p.name).join(', ')}
+          </p>
+          {isAdmin && (
+            <>
+              {latestAttempt === 0 && (
+                <button onClick={() => onStartTiebreaker()} disabled={actionLoading}
+                  style={{ backgroundColor: ACCENT, color: BG, fontWeight: 800, border: 'none', borderRadius: 10, padding: '9px 16px', fontSize: 13, cursor: actionLoading ? 'not-allowed' : 'pointer', opacity: actionLoading ? 0.6 : 1 }}>
+                  {actionLoading ? '…' : 'Start Tiebreaker →'}
+                </button>
+              )}
+              {latestAttempt > 0 && !currentAttemptComplete && (
+                <span style={{ fontSize: 13, color: MUTED, fontStyle: 'italic' }}>Tiebreaker in progress (Attempt {latestAttempt})…</span>
+              )}
+              {latestAttempt > 0 && currentAttemptComplete && (
+                <button onClick={() => onStartTiebreaker()} disabled={actionLoading}
+                  style={{ backgroundColor: ACCENT, color: BG, fontWeight: 800, border: 'none', borderRadius: 10, padding: '9px 16px', fontSize: 13, cursor: actionLoading ? 'not-allowed' : 'pointer', opacity: actionLoading ? 0.6 : 1 }}>
+                  {actionLoading ? '…' : 'Still tied — Start Next Attempt →'}
+                </button>
+              )}
+              {latestAttempt >= 3 && (
+                <div style={{ marginTop: 12 }}>
+                  <p style={{ fontSize: 12, color: MUTED, marginBottom: 8 }}>Repeated draws? Declare a winner manually:</p>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    {stillTiedGroup.map((p) => (
+                      <button key={p.id} onClick={() => onStartTiebreaker(p.id)} disabled={actionLoading}
+                        style={{ fontSize: 13, border: `1px solid ${BORDER}`, borderRadius: 8, padding: '7px 14px', backgroundColor: 'transparent', color: TEXT, cursor: actionLoading ? 'not-allowed' : 'pointer' }}>
+                        Declare {p.name} winner
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
     <div style={{ borderRadius: 16, overflow: 'hidden', border: `1px solid ${BORDER}` }}>
       <div style={{ display: 'grid', gridTemplateColumns: gridCols, gap: 8, padding: '10px 14px', backgroundColor: CARD, borderBottom: `1px solid ${BORDER}` }}>
         {(isAdmin ? ['', 'Player', 'Score', 'Buch.', 'Board'] : ['', 'Player', 'Score', 'Buch.']).map((h, i) => (
@@ -427,9 +577,11 @@ function StandingsTable({ standings, tournament, isAdmin, onSetFixedBoard }: { s
       </div>
 
       {standings.map((row) => {
-        const isWinner = tournament.status === 'complete' && row.rank === 1
+        const isWinner = tournament.status === 'complete' && (tournament.tiebreakWinnerId ? row.player.id === tournament.tiebreakWinnerId : row.rank === 1)
         const medal = tournament.status === 'complete'
-          ? (row.rank === 1 ? '🥇' : row.rank === 2 ? '🥈' : row.rank === 3 ? '🥉' : null)
+          ? (tournament.tiebreakWinnerId
+              ? (row.player.id === tournament.tiebreakWinnerId ? '🥇' : row.rank === 2 ? '🥈' : row.rank === 3 ? '🥉' : null)
+              : (row.rank === 1 ? '🥇' : row.rank === 2 ? '🥈' : row.rank === 3 ? '🥉' : null))
           : null
 
         return (
@@ -439,7 +591,8 @@ function StandingsTable({ standings, tournament, isAdmin, onSetFixedBoard }: { s
               {medal ?? row.rank}
             </span>
             <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 15, fontWeight: 700, color: isWinner ? ACCENT : TEXT, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.player.name}</div>
+              <div onClick={() => onSelectPlayer(row.player.id)}
+                style={{ fontSize: 15, fontWeight: 700, color: isWinner ? ACCENT : TEXT, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer' }}>{row.player.name}</div>
               {showRating && row.player.rating && <div style={{ fontSize: 12, color: MUTED }}>{row.player.rating}</div>}
             </div>
             <div style={{ textAlign: 'right' }}>
@@ -455,7 +608,39 @@ function StandingsTable({ standings, tournament, isAdmin, onSetFixedBoard }: { s
         )
       })}
     </div>
+    </div>
   )
+}
+
+// Score-only tally among a group, using only the given games - mirrors
+// resolveTiebreakAttempt in lib/tiebreak.ts but works off TournamentGame's
+// nested white/black player objects (the client-side shape) rather than raw
+// ids, and is a no-op fallback (returns the original group unchanged) until
+// every game in the attempt has a result.
+function currentTiebreakGroup(group: TournamentPlayer[], games: TournamentGame[]): TournamentPlayer[] {
+  if (games.length === 0 || !games.every((g) => !!g.result)) return group
+
+  const scores: Record<string, number> = {}
+  for (const p of group) scores[p.id] = 0
+
+  for (const g of games) {
+    if (g.byePlayer) {
+      if (scores[g.byePlayer.id] !== undefined) scores[g.byePlayer.id] += 1
+      continue
+    }
+    if (!g.white || !g.black) continue
+    if (g.result === '1-0') {
+      if (scores[g.white.id] !== undefined) scores[g.white.id] += 1
+    } else if (g.result === '0-1') {
+      if (scores[g.black.id] !== undefined) scores[g.black.id] += 1
+    } else if (g.result === '1/2-1/2') {
+      if (scores[g.white.id] !== undefined) scores[g.white.id] += 0.5
+      if (scores[g.black.id] !== undefined) scores[g.black.id] += 0.5
+    }
+  }
+
+  const maxScore = Math.max(...Object.values(scores))
+  return group.filter((p) => scores[p.id] === maxScore)
 }
 
 // A pinned board number keeps a player (e.g. a streamer whose camera can't
@@ -507,6 +692,115 @@ function BoardPin({ player, onSet }: { player: TournamentPlayer; onSet: (v: numb
       <PinIcon filled={!!player.fixedBoard} />
       {player.fixedBoard ?? ''}
     </button>
+  )
+}
+
+// ─── Player profile modal ──────────────────────────────────────────────────────
+
+type PlayerHistoryEntry = {
+  roundLabel: string
+  opponentName: string | null
+  color: 'White' | 'Black' | null
+  resultLabel: 'Win' | 'Loss' | 'Draw' | 'Bye' | 'Pending' | '—'
+  isPending: boolean
+}
+
+// Walks every round (tiebreaker rounds included, labeled distinctly) and reports
+// each result from THIS player's own point of view — e.g. Black winning shows
+// "Win", not the raw "0-1" a PGN-style result string would show.
+function getPlayerHistory(playerId: string, rounds: TournamentRound[]): PlayerHistoryEntry[] {
+  const entries: PlayerHistoryEntry[] = []
+  for (const round of rounds) {
+    const roundLabel = round.isTiebreaker ? 'Tiebreaker' : `Round ${round.number}`
+    for (const game of round.games) {
+      if (game.byePlayer?.id === playerId) {
+        entries.push({ roundLabel, opponentName: null, color: null, resultLabel: 'Bye', isPending: false })
+        continue
+      }
+      const isWhite = game.white?.id === playerId
+      const isBlack = game.black?.id === playerId
+      if (!isWhite && !isBlack) continue
+
+      const opponent = isWhite ? game.black : game.white
+      const color: 'White' | 'Black' = isWhite ? 'White' : 'Black'
+      let resultLabel: PlayerHistoryEntry['resultLabel'] = '—'
+      let isPending = false
+
+      if (game.result) {
+        if (game.result === '1/2-1/2') resultLabel = 'Draw'
+        else if ((game.result === '1-0' && isWhite) || (game.result === '0-1' && isBlack)) resultLabel = 'Win'
+        else resultLabel = 'Loss'
+      } else if (game.pendingResult) {
+        isPending = true
+        resultLabel = 'Pending'
+      }
+
+      entries.push({ roundLabel, opponentName: opponent?.name ?? null, color, resultLabel, isPending })
+    }
+  }
+  return entries
+}
+
+function PlayerProfileModal({ player, standingRow, rounds, onClose }: { player: TournamentPlayer; standingRow?: StandingRow; rounds: TournamentRound[]; onClose: () => void }) {
+  const history = getPlayerHistory(player.id, rounds)
+
+  return (
+    <div onClick={onClose}
+      style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 50 }}>
+      <div onClick={(e) => e.stopPropagation()} className="slide-up"
+        style={{ backgroundColor: CARD, border: `1px solid ${BORDER}`, borderTop: `1px solid ${DIM}`, borderRadius: '20px 20px 0 0', width: '100%', maxWidth: 480, padding: '8px 20px 32px', maxHeight: '85vh', overflowY: 'auto', boxShadow: '0 -20px 60px rgba(0,0,0,0.6)' }}>
+
+        <div style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: BORDER, margin: '12px auto 20px' }} />
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4 }}>
+          <div>
+            <h2 style={{ fontSize: 18, fontWeight: 800, color: TEXT, margin: 0 }}>{player.name}</h2>
+            {player.rating != null && <p style={{ color: MUTED, fontSize: 13, margin: '2px 0 0' }}>{player.rating}</p>}
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: MUTED, fontSize: 26, cursor: 'pointer', lineHeight: 1, padding: 0 }}>×</button>
+        </div>
+
+        {standingRow && (
+          <div style={{ display: 'flex', gap: 24, margin: '16px 0 20px', padding: '14px 16px', backgroundColor: ROW, borderRadius: 12, border: `1px solid ${BORDER}` }}>
+            <div>
+              <div style={{ fontSize: 11, color: MUTED, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Rank</div>
+              <div style={{ fontSize: 20, fontWeight: 800, color: ACCENT }}>{standingRow.rank}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 11, color: MUTED, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Score</div>
+              <div style={{ fontSize: 20, fontWeight: 800, color: TEXT }}>{scoreStr(standingRow.score)}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 11, color: MUTED, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Buch.</div>
+              <div style={{ fontSize: 20, fontWeight: 800, color: TEXT }}>{scoreStr(standingRow.buchholz)}</div>
+            </div>
+          </div>
+        )}
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {history.length === 0 && (
+            <p style={{ color: MUTED, fontSize: 14, textAlign: 'center', padding: '20px 0' }}>No rounds played yet.</p>
+          )}
+          {history.map((h, i) => (
+            <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', backgroundColor: ROW, borderRadius: 10, border: `1px solid ${BORDER}` }}>
+              <div>
+                <div style={{ fontSize: 13, color: MUTED }}>{h.roundLabel}</div>
+                <div style={{ fontSize: 15, color: TEXT, fontWeight: 600 }}>
+                  {h.opponentName ? `vs ${h.opponentName}` : 'Bye'}
+                  {h.color && <span style={{ color: MUTED, fontWeight: 400 }}> · {h.color}</span>}
+                </div>
+              </div>
+              <span style={{
+                fontSize: 13, fontWeight: 800, padding: '4px 10px', borderRadius: 8,
+                color: h.resultLabel === 'Win' ? BG : h.isPending ? AMBER : MUTED,
+                backgroundColor: h.resultLabel === 'Win' ? ACCENT : h.isPending ? 'rgba(249,115,22,0.15)' : 'transparent',
+              }}>
+                {h.resultLabel}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
   )
 }
 

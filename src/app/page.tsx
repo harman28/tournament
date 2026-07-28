@@ -35,6 +35,7 @@ export default function Home() {
   const [error, setError] = useState('')
   const [pasteMode, setPasteMode] = useState(false)
   const [pasteText, setPasteText] = useState('')
+  const [nameTouched, setNameTouched] = useState(false)
 
   const validPlayers = players.filter((p) => p.name.trim())
   const isRR = format === 'rr' || format === 'drr'
@@ -46,10 +47,16 @@ export default function Home() {
   }, {})
   const isDuplicate = (name: string) => name.trim() && (nameCounts[name.trim().toLowerCase()] ?? 0) > 1
   const recommended = recommendedRounds(Math.max(validPlayers.length, 2), format)
+  const formatLabel = format === 'rr' ? 'Round Robin' : format === 'drr' ? 'Double Round Robin' : 'Swiss'
+  const suggestedName = `${numRounds} Round ${formatLabel}`
 
   useEffect(() => {
     setNumRounds(recommended)
   }, [recommended])
+
+  useEffect(() => {
+    if (!nameTouched) setName(suggestedName)
+  }, [suggestedName, nameTouched])
 
   function updatePlayer(i: number, field: keyof PlayerEntry, value: string) {
     setPlayers((ps) => {
@@ -116,7 +123,7 @@ export default function Home() {
         <form onSubmit={handleSubmit}>
           {/* Name */}
           <Field label="Tournament name">
-            <input type="text" value={name} onChange={(e) => setName(e.target.value)}
+            <input type="text" value={name} onChange={(e) => { setName(e.target.value); setNameTouched(true) }}
               placeholder="e.g. Friday Night Chess"
               style={inputStyle(CARD, BORDER, TEXT, MUTED)}
               onFocus={(e) => (e.target.style.borderColor = ACCENT)}
