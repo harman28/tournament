@@ -31,6 +31,7 @@ A chess tournament management app supporting Swiss and Round Robin formats. Play
 | `src/app/api/tournaments/[id]/next-round/route.ts` | POST — complete current round, generate next (or finish tournament) |
 | `src/app/api/tournaments/[id]/games/[gameId]/result/route.ts` | POST (player → pending) / PATCH (admin → direct) |
 | `src/app/api/tournaments/[id]/games/[gameId]/approve/route.ts` | POST — admin approves or rejects a pending result |
+| `src/app/api/tournaments/[id]/players/route.ts` | POST — admin adds a late-joining player (Swiss only, tournament must be active) |
 
 ## Database
 
@@ -51,6 +52,17 @@ Gold/black palette. All styles are inline (Tailwind custom colours were unreliab
 
 ## Known gotchas
 
+- **Late joiners** (`POST /api/tournaments/[id]/players`, admin-only, Swiss + active tournament
+  only): no special catch-up scoring exists or is needed. A player with zero game history is
+  already indistinguishable, to `buildPlayerStates()`, from a player who's been sitting at 0
+  the whole event — they just slot into `generatePairings()` normally from the next round on.
+  One consequence worth knowing about: since a late joiner gets the highest seed number, they
+  sort to the very bottom of their (likely 0-score) score group, so if the round they join
+  has an odd total player count, they are quite likely to draw that round's bye instead of an
+  actual game - not a bug, just how the existing "lowest-ranked player without a prior bye
+  gets the bye" rule interacts with a newcomer's seed. Not offered for `rr`/`drr` - Round
+  Robin's schedule is fixed by player count via the circle method at round 1, so a new player
+  can't be spliced into an in-progress rotation.
 - **Prisma 7 adapter**: `PrismaClient` must receive a `PrismaPg` adapter; the old `datasource url` field in schema is gone.
 - **Standings self-reference bug** (fixed): `computeStandings` originally used `.map()` and referenced `standings[i-1]` inside the callback — TDZ error. Fixed with `reduce`.
 - **Bye ordering**: byes must be appended *last* in all pairing functions so they appear at the bottom of the pairings table without a board number.

@@ -34,6 +34,7 @@ export default function TournamentView({ tournament, standings, adminToken }: Pr
   const [resultsRound, setResultsRound] = useState(1)
   // Optimistic results: applied immediately, cleared on server refresh
   const [optimistic, setOptimistic] = useState<Record<string, string>>({})
+  const [addPlayerOpen, setAddPlayerOpen] = useState(false)
 
   const currentRound = tournament.rounds[tournament.rounds.length - 1]
   const roundsComplete = tournament.rounds.filter((r) => r.status === 'complete').length
@@ -114,6 +115,20 @@ export default function TournamentView({ tournament, standings, adminToken }: Pr
       body: JSON.stringify({ adminToken, fixedBoard }),
     })
     router.refresh()
+  }
+
+  async function addPlayer(name: string, rating: number | null): Promise<string | null> {
+    const res = await fetch(`/api/tournaments/${tournament.id}/players`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ adminToken, name, rating }),
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      return body.error ?? 'Something went wrong'
+    }
+    setAddPlayerOpen(false)
+    router.refresh()
+    return null
   }
 
   // Merge optimistic results into game data
@@ -319,7 +334,17 @@ export default function TournamentView({ tournament, standings, adminToken }: Pr
                 </div>
               )}
               {tab === 'standings' && (
-                <StandingsTable standings={standings} tournament={tournament} isAdmin={isAdmin} onSetFixedBoard={setFixedBoard} />
+                <div>
+                  {isAdmin && tournament.format === 'swiss' && tournament.status === 'active' && (
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+                      <button onClick={() => setAddPlayerOpen(true)}
+                        style={{ fontSize: 13, fontWeight: 700, border: `1px solid ${BORDER}`, borderRadius: 9, padding: '8px 14px', backgroundColor: 'transparent', color: ACCENT, cursor: 'pointer' }}>
+                        + Add late player
+                      </button>
+                    </div>
+                  )}
+                  <StandingsTable standings={standings} tournament={tournament} isAdmin={isAdmin} onSetFixedBoard={setFixedBoard} />
+                </div>
               )}
             </div>
           </div>
@@ -333,6 +358,15 @@ export default function TournamentView({ tournament, standings, adminToken }: Pr
           isAdmin={isAdmin}
           onClose={() => setModal(null)}
           onSubmit={(result, name) => submitResult(modal.id, result, name)}
+        />
+      )}
+
+      {/* ── Add late player modal ─────────────────────────────────── */}
+      {addPlayerOpen && (
+        <AddPlayerModal
+          nextRoundNumber={(currentRound?.number ?? 1) + 1}
+          onClose={() => setAddPlayerOpen(false)}
+          onSubmit={addPlayer}
         />
       )}
     </div>
@@ -570,6 +604,74 @@ function ResultModal({ game, isAdmin, onClose, onSubmit }: { game: TournamentGam
             )
           })}
         </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Add late player modal ──────────────────────────────────────────────────
+
+// For a Swiss tournament, a player who shows up after round 1 or 2 doesn't
+// need any special catch-up handling - buildPlayerStates() in lib/standings.ts
+// already treats a player with no game history as a normal 0-score entrant
+// with no opponents/color history, which is exactly what a fresh late joiner
+// is. They just won't appear in the current round's pairings (already fixed)
+// and get slotted in like everyone else starting next round.
+function AddPlayerModal({ nextRoundNumber, onClose, onSubmit }: { nextRoundNumber: number; onClose: () => void; onSubmit: (name: string, rating: number | null) => Promise<string | null> }) {
+  const [name, setName] = useState('')
+  const [rating, setRating] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+  const nameRef = useRef<HTMLInputElement>(null)
+
+  async function submit() {
+    if (!name.trim()) {
+      setError('Name is required')
+      nameRef.current?.focus()
+      return
+    }
+    setSubmitting(true)
+    setError(null)
+    const ratingNum = rating.trim() ? Number(rating.trim()) : null
+    const err = await onSubmit(name.trim(), ratingNum != null && !Number.isNaN(ratingNum) ? ratingNum : null)
+    setSubmitting(false)
+    if (err) setError(err)
+  }
+
+  return (
+    <div onClick={onClose}
+      style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 50 }}>
+      <div onClick={(e) => e.stopPropagation()} className="slide-up"
+        style={{ backgroundColor: CARD, border: `1px solid ${BORDER}`, borderTop: `1px solid ${DIM}`, borderRadius: '20px 20px 0 0', width: '100%', maxWidth: 480, padding: '8px 20px 40px', boxShadow: '0 -20px 60px rgba(0,0,0,0.6)' }}>
+
+        <div style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: BORDER, margin: '12px auto 20px' }} />
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+          <h2 style={{ fontSize: 18, fontWeight: 800, color: TEXT, margin: 0 }}>Add late player</h2>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: MUTED, fontSize: 26, cursor: 'pointer', lineHeight: 1, padding: 0 }}>×</button>
+        </div>
+        <p style={{ color: MUTED, fontSize: 14, marginBottom: 20 }}>
+          Joins with 0 points and no prior games. They&apos;ll appear in pairings starting Round {nextRoundNumber}.
+        </p>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: error ? 8 : 0 }}>
+          <input ref={nameRef} type="text" placeholder="Player name *" value={name} onChange={(e) => setName(e.target.value)}
+            style={{ width: '100%', backgroundColor: BG, border: `1.5px solid ${BORDER}`, borderRadius: 12, padding: '13px 16px', color: TEXT, fontSize: 15, outline: 'none' }}
+            onKeyDown={(e) => { if (e.key === 'Enter') submit() }}
+            onFocus={(e) => (e.target.style.borderColor = ACCENT)}
+            onBlur={(e) => (e.target.style.borderColor = BORDER)} />
+          <input type="number" placeholder="Rating (optional)" value={rating} onChange={(e) => setRating(e.target.value)}
+            style={{ width: '100%', backgroundColor: BG, border: `1.5px solid ${BORDER}`, borderRadius: 12, padding: '13px 16px', color: TEXT, fontSize: 15, outline: 'none' }}
+            onKeyDown={(e) => { if (e.key === 'Enter') submit() }}
+            onFocus={(e) => (e.target.style.borderColor = ACCENT)}
+            onBlur={(e) => (e.target.style.borderColor = BORDER)} />
+        </div>
+
+        {error && <p style={{ color: '#ef4444', fontSize: 13, margin: '0 0 12px' }}>{error}</p>}
+
+        <button onClick={submit} disabled={submitting}
+          style={{ width: '100%', backgroundColor: ACCENT, color: BG, fontWeight: 800, border: 'none', borderRadius: 14, padding: '15px', fontSize: 15, cursor: submitting ? 'not-allowed' : 'pointer', opacity: submitting ? 0.6 : 1, marginTop: 16 }}>
+          {submitting ? 'Adding…' : 'Add player'}
+        </button>
       </div>
     </div>
   )
