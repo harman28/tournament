@@ -1,14 +1,24 @@
 /**
- * Adding a late-joining player (POST /api/tournaments/[id]/players)
+ * Adding a player (POST /api/tournaments/[id]/players)
  *
- * Lets the organiser add a player mid-tournament - e.g. someone who shows up
- * after round 1 or 2 of a Swiss event. The new player has no game history, so
- * the existing pairing algorithm (buildPlayerStates/generatePairings) already
- * treats them as a normal 0-score entrant with no color history or prior
- * opponents once the next round is generated - no pairing-logic changes
- * needed here, just player creation. Admin-only. Swiss only (Round Robin's
- * schedule is fixed by player count at round 1). Only while the tournament
- * is "active" - not before it's started, not after it's finished.
+ * Two different callers hit this same endpoint, distinguished by tournament
+ * status:
+ *   - "setup"  - self-signup via the invite link. No admin token needed -
+ *                anyone with the link (including the admin) can add a
+ *                player. Works for every format, since no round-1 schedule
+ *                has been generated yet.
+ *   - "active" - a late joiner added by the organiser mid-tournament (e.g.
+ *                someone who shows up after round 1 or 2). Admin token
+ *                required. Swiss only - Round Robin's schedule is fixed by
+ *                player count at round 1, so it can't accept new entrants
+ *                once running.
+ *   - "complete" - always rejected.
+ *
+ * A newly added player has no game history, so the existing pairing
+ * algorithm (buildPlayerStates/generatePairings) already treats them as a
+ * normal 0-score entrant with no color history or prior opponents once the
+ * next round is generated - no pairing-logic changes needed here, just
+ * player creation.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -103,17 +113,6 @@ describe('State guards', () => {
     expect(vi.mocked(prisma.player.create)).not.toHaveBeenCalled()
   })
 
-  it('rejects when the tournament has not started yet', async () => {
-    givenTournamentExists({ status: 'setup' })
-
-    const response = await POST(addPlayerRequest({ adminToken: ADMIN_TOKEN, name: 'Dave' }), routeParams)
-    const body = await response.json()
-
-    expect(response.status).toBe(400)
-    expect(body.error).toMatch(/active/)
-    expect(vi.mocked(prisma.player.create)).not.toHaveBeenCalled()
-  })
-
   it('rejects when the tournament has already finished', async () => {
     givenTournamentExists({ status: 'complete' })
 
@@ -121,6 +120,43 @@ describe('State guards', () => {
 
     expect(response.status).toBe(400)
     expect(vi.mocked(prisma.player.create)).not.toHaveBeenCalled()
+  })
+})
+
+// ─── Self-signup during setup ───────────────────────────────────────────────
+
+describe('Self-signup during setup', () => {
+  it('allows joining with no admin token at all', async () => {
+    givenTournamentExists({ status: 'setup' })
+    vi.mocked(prisma.player.create).mockResolvedValueOnce({} as any)
+
+    const response = await POST(addPlayerRequest({ name: 'Dave' }), routeParams)
+
+    expect(response.status).toBe(201)
+    expect(vi.mocked(prisma.player.create)).toHaveBeenCalledWith({
+      data: { tournamentId: 'tid1', name: 'Dave', rating: null, seed: 4 },
+    })
+  })
+
+  it('ignores an incorrect/missing admin token - anyone with the link can join pre-start', async () => {
+    givenTournamentExists({ status: 'setup' })
+    vi.mocked(prisma.player.create).mockResolvedValueOnce({} as any)
+
+    const response = await POST(addPlayerRequest({ adminToken: 'wrong-token', name: 'Dave' }), routeParams)
+
+    expect(response.status).toBe(201)
+  })
+
+  it('allows self-signup for Round Robin and Double Round Robin - no schedule exists yet pre-start', async () => {
+    for (const format of ['rr', 'drr']) {
+      vi.clearAllMocks()
+      givenTournamentExists({ status: 'setup', format })
+      vi.mocked(prisma.player.create).mockResolvedValueOnce({} as any)
+
+      const response = await POST(addPlayerRequest({ name: 'Dave' }), routeParams)
+
+      expect(response.status).toBe(201)
+    }
   })
 })
 

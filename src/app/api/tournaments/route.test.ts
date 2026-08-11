@@ -150,18 +150,30 @@ describe('Input validation', () => {
     expect(response.status).toBe(400)
   })
 
-  it('rejects a request with only one player', async () => {
+  it('rejects a request where players is not an array', async () => {
     const response = await POST(createTournamentRequest({
       name: 'Cup',
       format: 'swiss',
       numRounds: 3,
-      players: [{ name: 'Alice' }],
+      players: null,
     }))
 
     expect(response.status).toBe(400)
   })
+})
 
-  it('rejects a request with no players at all', async () => {
+// ─── Empty / invite-link creation ──────────────────────────────────────────────
+//
+// Players are no longer required at creation time - an organiser can create a
+// tournament with zero (or one) players and share the invite link instead,
+// letting everyone add themselves via POST /api/tournaments/[id]/players
+// while the tournament is still "setup" (see that route's tests). The real
+// minimum of 2 players is enforced at Start, not here.
+
+describe('Creating without a full player list', () => {
+  it('allows creating a tournament with no players at all', async () => {
+    vi.mocked(prisma.tournament.create).mockResolvedValueOnce({ id: 'x' } as any)
+
     const response = await POST(createTournamentRequest({
       name: 'Cup',
       format: 'swiss',
@@ -169,6 +181,21 @@ describe('Input validation', () => {
       players: [],
     }))
 
-    expect(response.status).toBe(400)
+    expect(response.status).toBe(200)
+    const { data } = vi.mocked(prisma.tournament.create).mock.calls[0][0]
+    expect(data.players.create).toEqual([])
+  })
+
+  it('allows creating a tournament with only one player', async () => {
+    vi.mocked(prisma.tournament.create).mockResolvedValueOnce({ id: 'x' } as any)
+
+    const response = await POST(createTournamentRequest({
+      name: 'Cup',
+      format: 'swiss',
+      numRounds: 3,
+      players: [{ name: 'Alice' }],
+    }))
+
+    expect(response.status).toBe(200)
   })
 })

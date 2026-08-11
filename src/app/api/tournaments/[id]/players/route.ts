@@ -14,19 +14,21 @@ export async function POST(
   })
 
   if (!tournament) return Response.json({ error: 'Not found' }, { status: 404 })
-  if (tournament.adminToken !== adminToken)
-    return Response.json({ error: 'Forbidden' }, { status: 403 })
 
-  // Round Robin schedules are fixed by the circle method for a known player
-  // count at round-1 time - there's no way to splice a new player into an
-  // in-progress rotation without recomputing every remaining round's byes.
-  // Swiss re-pairs from scratch each round anyway, so a late joiner just
-  // slots in at 0 points from the next round on, same as swiss.ts already
-  // treats any player with no game history.
-  if (tournament.format !== 'swiss')
-    return Response.json({ error: 'Late join is only supported for Swiss tournaments' }, { status: 400 })
-  if (tournament.status !== 'active')
-    return Response.json({ error: 'Tournament must be active to add a player' }, { status: 400 })
+  // Two different callers hit this same endpoint:
+  //  - during "setup", anyone with the (invite) link can add themselves -
+  //    no admin token needed, same trust model as the link itself.
+  //  - once "active", only the admin can add a late joiner, and only for
+  //    Swiss - see the players/route.test.ts fixture notes for why Round
+  //    Robin can't accept new entrants after its round-1 schedule is fixed.
+  if (tournament.status === 'active') {
+    if (tournament.adminToken !== adminToken)
+      return Response.json({ error: 'Forbidden' }, { status: 403 })
+    if (tournament.format !== 'swiss')
+      return Response.json({ error: 'Late join is only supported for Swiss tournaments' }, { status: 400 })
+  } else if (tournament.status !== 'setup') {
+    return Response.json({ error: 'Tournament has already finished' }, { status: 400 })
+  }
 
   if (typeof name !== 'string' || !name.trim())
     return Response.json({ error: 'Name is required' }, { status: 400 })

@@ -35,6 +35,8 @@ export default function TournamentView({ tournament, standings, adminToken }: Pr
   // Optimistic results: applied immediately, cleared on server refresh
   const [optimistic, setOptimistic] = useState<Record<string, string>>({})
   const [addPlayerOpen, setAddPlayerOpen] = useState(false)
+  const [joinedPlayer, setJoinedPlayer] = useState<{ id: string; name: string } | null>(null)
+  const [showJoinForm, setShowJoinForm] = useState(false)
 
   const currentRound = tournament.rounds[tournament.rounds.length - 1]
   const roundsComplete = tournament.rounds.filter((r) => r.status === 'complete').length
@@ -55,6 +57,18 @@ export default function TournamentView({ tournament, standings, adminToken }: Pr
   useEffect(() => {
     if (currentRound) setResultsRound(currentRound.number)
   }, [currentRound?.number])
+
+  // Remembers who this browser joined as, so a refresh (or the 30s auto-poll)
+  // doesn't re-show the join form to someone who already signed up.
+  useEffect(() => {
+    if (isAdmin) return
+    const raw = localStorage.getItem(`joined:${tournament.id}`)
+    if (!raw) return
+    try {
+      const saved = JSON.parse(raw) as { id: string; name: string }
+      if (tournament.players.some((p) => p.id === saved.id)) setJoinedPlayer(saved)
+    } catch { /* ignore malformed localStorage */ }
+  }, [isAdmin, tournament.id, tournament.players])
 
   const copyLink = useCallback(async () => {
     await navigator.clipboard.writeText(`${window.location.origin}/t/${tournament.id}`)
@@ -129,6 +143,32 @@ export default function TournamentView({ tournament, standings, adminToken }: Pr
     setAddPlayerOpen(false)
     router.refresh()
     return null
+  }
+
+  // Public, unauthenticated self-signup - same endpoint as addPlayer above,
+  // just without an admin token. The route allows this while status is
+  // "setup" (see players/route.ts).
+  async function joinTournament(name: string, rating: number | null): Promise<string | null> {
+    const res = await fetch(`/api/tournaments/${tournament.id}/players`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, rating }),
+    })
+    const body = await res.json().catch(() => ({}))
+    if (!res.ok) return body.error ?? 'Something went wrong'
+    const player = { id: body.player.id as string, name: body.player.name as string }
+    localStorage.setItem(`joined:${tournament.id}`, JSON.stringify(player))
+    setJoinedPlayer(player)
+    setShowJoinForm(false)
+    router.refresh()
+    return null
+  }
+
+  async function removePlayer(playerId: string) {
+    await fetch(`/api/tournaments/${tournament.id}/players/${playerId}`, {
+      method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ adminToken }),
+    })
+    router.refresh()
   }
 
   // Merge optimistic results into game data
@@ -247,8 +287,8 @@ export default function TournamentView({ tournament, standings, adminToken }: Pr
                     <div style={{ display: 'flex', gap: 12 }}>
                       <span style={{ fontSize: 22 }}>🔗</span>
                       <div>
-                        <p style={{ fontSize: 13, fontWeight: 700, color: ACCENT, margin: '0 0 3px' }}>Player link</p>
-                        <p style={{ fontSize: 12, color: MUTED, margin: 0 }}>Share with all players. They can view pairings, standings, and submit results for your approval.</p>
+                        <p style={{ fontSize: 13, fontWeight: 700, color: ACCENT, margin: '0 0 3px' }}>Invite link</p>
+                        <p style={{ fontSize: 12, color: MUTED, margin: 0 }}>Share with everyone. Before you start, anyone with the link can add themselves - no account needed. Once running, it&apos;s also how they view pairings, standings, and submit results for your approval.</p>
                       </div>
                     </div>
                     <div style={{ display: 'flex', gap: 12 }}>
@@ -266,33 +306,52 @@ export default function TournamentView({ tournament, standings, adminToken }: Pr
                   {actionLoading ? 'Starting…' : 'Start Tournament →'}
                 </button>
                 <button onClick={copyLink}
-                  style={{ width: '100%', backgroundColor: 'transparent', border: `1px solid ${BORDER}`, color: MUTED, borderRadius: 14, padding: '13px', fontSize: 14, cursor: 'pointer' }}>
-                  {copied ? '✓ Player link copied!' : 'Copy player link'}
+                  style={{ width: '100%', backgroundColor: 'transparent', border: `1px solid ${BORDER}`, color: MUTED, borderRadius: 14, padding: '13px', fontSize: 14, cursor: 'pointer', marginBottom: 20 }}>
+                  {copied ? '✓ Invite link copied!' : 'Copy invite link'}
                 </button>
+
+                <JoinForm
+                  existingNames={tournament.players.map((p) => p.name)}
+                  onSubmit={addPlayer}
+                  namePlaceholder="Add a player by name"
+                  submitLabel="Add player"
+                  submittingLabel="Adding…"
+                />
+
+                <RosterList players={tournament.players} isAdmin onRemove={removePlayer} />
               </>
             ) : (
               <>
                 <div style={{ textAlign: 'center', marginBottom: 28 }}>
                   <div style={{ fontSize: 44, marginBottom: 12 }}>⏳</div>
-                  <h2 style={{ fontSize: 22, fontWeight: 800, color: TEXT, margin: '0 0 8px' }}>Waiting for the organiser to start…</h2>
+                  <h2 style={{ fontSize: 22, fontWeight: 800, color: TEXT, margin: '0 0 8px' }}>
+                    {joinedPlayer ? "You're in!" : 'Join this tournament'}
+                  </h2>
                   <p style={{ color: MUTED, lineHeight: 1.6 }}>{tournament.players.length} players · {tournament.numRounds} rounds · {formatLabel}</p>
                 </div>
-                {/* Show player list */}
-                <div style={{ backgroundColor: CARD, border: `1px solid ${BORDER}`, borderRadius: 14, overflow: 'hidden' }}>
-                  <div style={{ padding: '12px 16px', borderBottom: `1px solid ${BORDER}` }}>
-                    <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: MUTED }}>
-                      {tournament.players.length} Players registered
-                    </span>
+
+                {joinedPlayer ? (
+                  <div style={{ backgroundColor: `${ACCENT}0f`, border: `1px solid ${ACCENT}55`, borderRadius: 14, padding: '16px 18px', marginBottom: 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                    <span style={{ fontSize: 14, color: TEXT }}>Signed up as <strong style={{ color: ACCENT }}>{joinedPlayer.name}</strong>. Sit tight for the organiser to start.</span>
+                    {!showJoinForm && (
+                      <button onClick={() => setShowJoinForm(true)}
+                        style={{ fontSize: 12, fontWeight: 700, color: MUTED, background: 'none', border: 'none', textDecoration: 'underline', textUnderlineOffset: 2, cursor: 'pointer', whiteSpace: 'nowrap', padding: 0 }}>
+                        + add another
+                      </button>
+                    )}
                   </div>
-                  {tournament.players.map((p, i) => (
-                    <div key={p.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderTop: i === 0 ? 'none' : `1px solid ${BORDER}`, backgroundColor: ROW }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                        <span style={{ fontSize: 12, color: DIM, fontFamily: 'monospace', minWidth: 20 }}>{i + 1}</span>
-                        <span style={{ fontSize: 15, fontWeight: 600, color: TEXT }}>{p.name}</span>
-                      </div>
-                      {p.rating && <span style={{ fontSize: 13, color: MUTED }}>{p.rating}</span>}
-                    </div>
-                  ))}
+                ) : null}
+
+                {(!joinedPlayer || showJoinForm) && (
+                  <JoinForm
+                    existingNames={tournament.players.map((p) => p.name)}
+                    onSubmit={joinTournament}
+                    onCancel={joinedPlayer ? () => setShowJoinForm(false) : undefined}
+                  />
+                )}
+
+                <div style={{ marginTop: 20 }}>
+                  <RosterList players={tournament.players} isAdmin={false} />
                 </div>
               </>
             )}
@@ -566,10 +625,9 @@ function ResultModal({ game, isAdmin, onClose, onSubmit }: { game: TournamentGam
   }
 
   return (
-    <div onClick={onClose}
-      style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 50 }}>
-      <div onClick={(e) => e.stopPropagation()} className="slide-up"
-        style={{ backgroundColor: CARD, border: `1px solid ${BORDER}`, borderTop: `1px solid ${DIM}`, borderRadius: '20px 20px 0 0', width: '100%', maxWidth: 480, padding: '8px 20px 40px', boxShadow: '0 -20px 60px rgba(0,0,0,0.6)' }}>
+    <div onClick={onClose} className="modal-overlay">
+      <div onClick={(e) => e.stopPropagation()} className="modal-sheet slide-up"
+        style={{ backgroundColor: CARD, border: `1px solid ${BORDER}`, borderTop: `1px solid ${DIM}`, padding: '8px 20px 40px', boxShadow: '0 -20px 60px rgba(0,0,0,0.6)' }}>
 
         <div style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: BORDER, margin: '12px auto 20px' }} />
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
@@ -639,10 +697,9 @@ function AddPlayerModal({ nextRoundNumber, onClose, onSubmit }: { nextRoundNumbe
   }
 
   return (
-    <div onClick={onClose}
-      style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 50 }}>
-      <div onClick={(e) => e.stopPropagation()} className="slide-up"
-        style={{ backgroundColor: CARD, border: `1px solid ${BORDER}`, borderTop: `1px solid ${DIM}`, borderRadius: '20px 20px 0 0', width: '100%', maxWidth: 480, padding: '8px 20px 40px', boxShadow: '0 -20px 60px rgba(0,0,0,0.6)' }}>
+    <div onClick={onClose} className="modal-overlay">
+      <div onClick={(e) => e.stopPropagation()} className="modal-sheet slide-up"
+        style={{ backgroundColor: CARD, border: `1px solid ${BORDER}`, borderTop: `1px solid ${DIM}`, padding: '8px 20px 40px', boxShadow: '0 -20px 60px rgba(0,0,0,0.6)' }}>
 
         <div style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: BORDER, margin: '12px auto 20px' }} />
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
@@ -674,6 +731,93 @@ function AddPlayerModal({ nextRoundNumber, onClose, onSubmit }: { nextRoundNumbe
         </button>
       </div>
     </div>
+  )
+}
+
+// ─── Roster list (setup state) ───────────────────────────────────────────────
+
+function RosterList({ players, isAdmin, onRemove }: { players: TournamentPlayer[]; isAdmin: boolean; onRemove?: (id: string) => void }) {
+  return (
+    <div style={{ backgroundColor: CARD, border: `1px solid ${BORDER}`, borderRadius: 14, overflow: 'hidden' }}>
+      <div style={{ padding: '12px 16px', borderBottom: `1px solid ${BORDER}` }}>
+        <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: MUTED }}>
+          {players.length} player{players.length === 1 ? '' : 's'} registered
+        </span>
+      </div>
+      {players.length === 0 && (
+        <div style={{ padding: '16px', backgroundColor: ROW, textAlign: 'center', color: MUTED, fontSize: 13 }}>
+          No one yet - share the invite link to get started.
+        </div>
+      )}
+      {players.map((p, i) => (
+        <div key={p.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderTop: i === 0 ? 'none' : `1px solid ${BORDER}`, backgroundColor: ROW }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ fontSize: 12, color: DIM, fontFamily: 'monospace', minWidth: 20 }}>{i + 1}</span>
+            <span style={{ fontSize: 15, fontWeight: 600, color: TEXT }}>{p.name}</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            {p.rating && <span style={{ fontSize: 13, color: MUTED }}>{p.rating}</span>}
+            {isAdmin && onRemove && (
+              <button type="button" onClick={() => onRemove(p.id)} title={`Remove ${p.name}`}
+                style={{ background: 'none', border: 'none', color: MUTED, fontSize: 18, cursor: 'pointer', lineHeight: 1, padding: 0 }}>×</button>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ─── Join form (public setup state - self-signup via the invite link) ───────
+
+function JoinForm({ existingNames, onSubmit, onCancel, namePlaceholder = 'Your name', submitLabel = 'Join tournament', submittingLabel = 'Joining…' }: { existingNames: string[]; onSubmit: (name: string, rating: number | null) => Promise<string | null>; onCancel?: () => void; namePlaceholder?: string; submitLabel?: string; submittingLabel?: string }) {
+  const [name, setName] = useState('')
+  const [rating, setRating] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+
+  const lowerExisting = existingNames.map((n) => n.trim().toLowerCase())
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault()
+    const trimmed = name.trim()
+    if (!trimmed) { setError('Enter a name'); return }
+    if (lowerExisting.includes(trimmed.toLowerCase())) { setError("That name's already taken - try adding a last initial"); return }
+    setSubmitting(true)
+    setError(null)
+    const ratingNum = rating.trim() ? Number(rating.trim()) : null
+    const err = await onSubmit(trimmed, ratingNum != null && !Number.isNaN(ratingNum) ? ratingNum : null)
+    setSubmitting(false)
+    if (err) setError(err)
+    else { setName(''); setRating('') }
+  }
+
+  return (
+    <form onSubmit={submit} style={{ backgroundColor: CARD, border: `1px solid ${BORDER}`, borderRadius: 14, padding: '16px 18px', marginBottom: 20 }}>
+      <div style={{ display: 'flex', gap: 10 }}>
+        <input type="text" placeholder={namePlaceholder} value={name} onChange={(e) => setName(e.target.value)} autoFocus
+          style={{ flex: 1, minWidth: 0, backgroundColor: BG, border: `1.5px solid ${error ? '#ef4444' : BORDER}`, borderRadius: 10, padding: '12px 14px', color: TEXT, fontSize: 15, outline: 'none' }}
+          onFocus={(e) => (e.target.style.borderColor = ACCENT)}
+          onBlur={(e) => (e.target.style.borderColor = error ? '#ef4444' : BORDER)} />
+        <input type="number" placeholder="Rtg" value={rating} onChange={(e) => setRating(e.target.value)}
+          style={{ width: 68, backgroundColor: BG, border: `1.5px solid ${BORDER}`, borderRadius: 10, padding: '12px 14px', color: TEXT, fontSize: 15, outline: 'none' }}
+          onFocus={(e) => (e.target.style.borderColor = ACCENT)}
+          onBlur={(e) => (e.target.style.borderColor = BORDER)} />
+      </div>
+      {error && <p style={{ color: '#ef4444', fontSize: 13, margin: '8px 0 0' }}>{error}</p>}
+      <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+        <button type="submit" disabled={submitting}
+          style={{ flex: 1, backgroundColor: ACCENT, color: BG, fontWeight: 800, border: 'none', borderRadius: 10, padding: '13px', fontSize: 15, cursor: submitting ? 'not-allowed' : 'pointer', opacity: submitting ? 0.6 : 1 }}>
+          {submitting ? submittingLabel : submitLabel}
+        </button>
+        {onCancel && (
+          <button type="button" onClick={onCancel}
+            style={{ backgroundColor: 'transparent', border: `1px solid ${BORDER}`, color: MUTED, borderRadius: 10, padding: '13px 16px', fontSize: 14, cursor: 'pointer' }}>
+            Cancel
+          </button>
+        )}
+      </div>
+    </form>
   )
 }
 

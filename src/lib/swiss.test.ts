@@ -35,6 +35,7 @@ function swissPlayer(
     score: 0,
     colorBalance: 0,
     lastColor: null,
+    colorStreak: 0,
     opponents: new Set(),
     hadBye: false,
     ...overrides,
@@ -253,6 +254,77 @@ describe('Subsequent round Swiss pairings', () => {
       const pairings = generatePairings(players)
 
       expect(pairings[0]).toMatchObject({ type: 'game', whiteId: 'P1', blackId: 'P2' })
+    })
+
+    it('when color balances are equal and both last had white, prefers whoever has the shorter white streak - not always the higher-ranked player', () => {
+      // Regression test: a bug here let the higher-ranked player (P1, who
+      // always sorts first) keep collecting white whenever tied with an
+      // opponent who *also* just had white, because the old tie-break only
+      // checked "did either player just have black" and defaulted to P1
+      // otherwise - it never checked whether P1 itself had just had white,
+      // let alone how long a white streak P1 was already on. A real report:
+      // a top player got white 3 rounds in a row this way. P1 here is
+      // already on a 2-round white streak; P2 just started one - better to
+      // extend P2's shorter streak than P1's longer one.
+      const players = [
+        swissPlayer('P1', 1, { score: 2, colorBalance: 1, lastColor: 'white', colorStreak: 2 }),
+        swissPlayer('P2', 2, { score: 2, colorBalance: 1, lastColor: 'white', colorStreak: 1 }),
+      ]
+      const pairings = generatePairings(players)
+
+      expect(pairings[0]).toMatchObject({ type: 'game', whiteId: 'P2', blackId: 'P1' })
+    })
+
+    it('when balance, last color, and streak are all tied, falls back to the default order (nobody is more due than the other)', () => {
+      const players = [
+        swissPlayer('P1', 1, { score: 2, colorBalance: -1, lastColor: 'black' }),
+        swissPlayer('P2', 2, { score: 2, colorBalance: -1, lastColor: 'black' }),
+      ]
+      const pairings = generatePairings(players)
+
+      expect(pairings[0]).toMatchObject({ type: 'game', whiteId: 'P1', blackId: 'P2' })
+    })
+
+    it('never lets a player be assigned the same color 3 rounds running when an equal-balance opponent is available each round', () => {
+      // Simulates two co-leaders repeatedly tied in colorBalance after every
+      // decisive game, the exact scenario that produced the reported bug -
+      // with colorBalance/lastColor/colorStreak updated after each round
+      // exactly the way buildPlayerStates() does in production.
+      let p1: PairingPlayer = swissPlayer('P1', 1, { score: 0 })
+      let p2: PairingPlayer = swissPlayer('P2', 2, { score: 0 })
+      const colors: string[] = []
+
+      for (let round = 0; round < 3; round++) {
+        const pairings = generatePairings([p1, p2])
+        const game = pairings[0] as { type: 'game'; whiteId: string; blackId: string }
+        colors.push(game.whiteId)
+
+        // Apply the result of this round (both keep winning, staying tied)
+        const whiteWasP1 = game.whiteId === 'P1'
+        const p1Color: 'white' | 'black' = whiteWasP1 ? 'white' : 'black'
+        const p2Color: 'white' | 'black' = whiteWasP1 ? 'black' : 'white'
+        p1 = { ...p1, score: p1.score + 1, colorBalance: p1.colorBalance + (whiteWasP1 ? 1 : -1), lastColor: p1Color, colorStreak: p1.lastColor === p1Color ? p1.colorStreak + 1 : 1 }
+        p2 = { ...p2, score: p2.score + 1, colorBalance: p2.colorBalance + (whiteWasP1 ? -1 : 1), lastColor: p2Color, colorStreak: p2.lastColor === p2Color ? p2.colorStreak + 1 : 1 }
+      }
+
+      // P1 should not have gotten white in all 3 rounds
+      expect(colors.filter((id) => id === 'P1').length).toBeLessThan(3)
+    })
+
+    it('specifically covers the reported scenario: two players who each built a white streak against different opponents, then get paired against each other', () => {
+      // P1 and P2 never played each other before - each independently won
+      // as white last round against someone else, and now land in the same
+      // score group and get paired against each other for the first time.
+      const p1 = swissPlayer('P1', 1, { score: 2, colorBalance: 2, lastColor: 'white', colorStreak: 2 })
+      const p2 = swissPlayer('P2', 2, { score: 2, colorBalance: 1, lastColor: 'white', colorStreak: 1 })
+
+      const pairings = generatePairings([p1, p2])
+
+      // Balances differ (2 vs 1), so the balance rule alone already protects
+      // P1 here - P2 gets white for having the lower balance. This is the
+      // more common real-world shape of the bug report; the pure streak
+      // tie-break above covers the rarer exactly-equal-balance case.
+      expect(pairings[0]).toMatchObject({ type: 'game', whiteId: 'P2', blackId: 'P1' })
     })
   })
 

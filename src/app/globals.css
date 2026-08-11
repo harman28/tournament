@@ -18,10 +18,38 @@
   0% { background-position: -200% center; }
   100% { background-position: 200% center; }
 }
+@keyframes modalPop {
+  from { opacity: 0; transform: scale(0.97) translateY(6px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
 
 .fade-up { animation: fadeUp 0.35s ease both; }
 .slide-up { animation: slideUp 0.3s cubic-bezier(0.32, 0.72, 0, 1) both; }
 .pulse-live { animation: pulse-glow 2s ease infinite; }
+
+/* Result/add-player modals: a bottom sheet on mobile (thumb-reachable), but
+   centered on wider viewports - a mouse has to travel the full screen height
+   to reach a bottom sheet, which hurts when entering several results in a
+   row on desktop. */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(0, 0, 0, 0.8);
+  backdrop-filter: blur(6px);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  z-index: 50;
+}
+.modal-sheet {
+  width: 100%;
+  max-width: 480px;
+  border-radius: 20px 20px 0 0;
+}
+@media (min-width: 640px) {
+  .modal-overlay { align-items: center; padding: 20px; }
+  .modal-sheet { border-radius: 20px; animation: modalPop 0.18s ease both; max-height: calc(100vh - 40px); overflow-y: auto; }
+}
 
 .row-hover {
   transition: background-color 0.15s ease;

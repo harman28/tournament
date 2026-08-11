@@ -11,7 +11,11 @@ export async function POST(req: NextRequest) {
     players: Array<{ name: string; rating?: number | null }>
   }
 
-  if (!name?.trim() || !players?.length || players.length < 2) {
+  // Players are optional at creation time - a tournament can be created
+  // empty and filled entirely via the invite link (POST .../players while
+  // status is "setup", no admin token needed). The /start route enforces
+  // the real minimum of 2 once the organiser is ready to begin.
+  if (!name?.trim() || !Array.isArray(players)) {
     return Response.json({ error: 'Invalid input' }, { status: 400 })
   }
 

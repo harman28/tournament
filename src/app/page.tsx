@@ -84,7 +84,7 @@ export default function Home() {
     e.preventDefault()
     setError('')
     if (!name.trim()) return setError('Enter a tournament name.')
-    if (validPlayers.length < 2) return setError('Add at least 2 players.')
+    if (validPlayers.length === 1) return setError('Add at least 2 players, or none - you can invite everyone via the link instead.')
     if (validPlayers.some((p) => isDuplicate(p.name))) return setError('Two players have the same name.')
     setLoading(true)
     try {
@@ -200,6 +200,10 @@ export default function Home() {
                 )}
               </div>
             )}
+            <p style={{ fontSize: 12, color: MUTED, marginTop: 8 }}>
+              Leave this empty and share the invite link instead - anyone with the link can add
+              themselves before you start.
+            </p>
           </Field>
 
           {/* Rounds */}

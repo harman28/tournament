@@ -12,6 +12,10 @@ export type PairingPlayer = {
   score: number
   colorBalance: number
   lastColor: 'white' | 'black' | null
+  // How many rounds in a row (most recent streak) lastColor has held. Needed
+  // on top of lastColor alone to break a colorBalance tie between two
+  // players who *both* just had the same color - see assignColors.
+  colorStreak: number
   opponents: Set<string>
   hadBye: boolean
 }
@@ -124,12 +128,23 @@ export function generatePairings(players: PairingPlayer[]): Pairing[] {
   const results: Pairing[] = []
   let byePlayer: PairingPlayer | null = null
 
-  // Bye goes to lowest-ranked without a prior bye — will be appended at end
+  // Bye goes to the lowest-ranked player without a prior bye — will be
+  // appended at end. Among those eligible, skip anyone who hasn't played a
+  // single game yet (opponents.size === 0, never had a bye either) if a
+  // more experienced candidate is available: a brand-new entrant (someone
+  // added mid-tournament - see players/route.ts) sorts to the very bottom
+  // on a fresh 0 score, so without this they'd draw a bye as their first
+  // "round" ever, which defeats the point of joining. Only fall back to a
+  // never-played candidate if literally everyone eligible is in that boat
+  // (e.g. several late joiners at once with an odd total).
   if (sorted.length % 2 !== 0) {
-    byePlayer = sorted[sorted.length - 1]
+    let fallback: PairingPlayer | null = null
     for (let i = sorted.length - 1; i >= 0; i--) {
-      if (!sorted[i].hadBye) { byePlayer = sorted[i]; break }
+      if (sorted[i].hadBye) continue
+      if (fallback === null) fallback = sorted[i]
+      if (sorted[i].opponents.size > 0) { byePlayer = sorted[i]; break }
     }
+    if (!byePlayer) byePlayer = fallback ?? sorted[sorted.length - 1]
     paired.add(byePlayer.id)
   }
 
@@ -160,11 +175,37 @@ export function generatePairings(players: PairingPlayer[]): Pairing[] {
   return results
 }
 
+// Positive → this player is "due" for white (been on black, and the longer
+// the black streak the more due); negative → giving them white would extend
+// an existing white streak (worse the longer that streak already is).
+function dueForWhite(p: PairingPlayer): number {
+  if (p.lastColor === 'black') return p.colorStreak
+  if (p.lastColor === 'white') return -p.colorStreak
+  return 0
+}
+
 function assignColors(p1: PairingPlayer, p2: PairingPlayer) {
   if (p1.colorBalance < p2.colorBalance) return { white: p1, black: p2 }
   if (p2.colorBalance < p1.colorBalance) return { white: p2, black: p1 }
-  if (p1.lastColor === 'black') return { white: p1, black: p2 }
-  if (p2.lastColor === 'black') return { white: p2, black: p1 }
+  // Equal balance - prefer whoever is more "due" for white based on their
+  // current same-color streak, so nobody keeps landing the same color round
+  // after round on ties. colorStreak (not just lastColor) matters here: two
+  // players tied on balance who *both* just had white (e.g. each won as
+  // white last round, against different opponents, and now happen to be
+  // paired against each other) can't be told apart by lastColor alone -
+  // the old fix only compared "did p1 have white, did p2 have white" and
+  // fell through to always favoring p1 (whoever sorts first by score/seed -
+  // in practice the tournament's own top player) whenever both sides
+  // matched. Tracking the streak length breaks that tie correctly, and
+  // guarantees it self-corrects within one round even in the worst case:
+  // whichever of them gets white extends to streak+1, but the very next
+  // time they're tied against *anyone*, their now-larger streak makes them
+  // the *least* due for white, handing it to the other side before a real
+  // 3-in-a-row can happen.
+  const d1 = dueForWhite(p1)
+  const d2 = dueForWhite(p2)
+  if (d1 > d2) return { white: p1, black: p2 }
+  if (d2 > d1) return { white: p2, black: p1 }
   return { white: p1, black: p2 }
 }
 
