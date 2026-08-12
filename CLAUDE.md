@@ -34,6 +34,8 @@ A chess tournament management app supporting Swiss and Round Robin formats. Play
 | `src/app/api/tournaments/[id]/games/[gameId]/approve/route.ts` | POST — admin approves or rejects a pending result |
 | `src/app/api/tournaments/[id]/players/route.ts` | POST — self-signup (no token, any format, only while "setup") or admin late-join (token required, Swiss only, only while "active") |
 | `src/app/api/tournaments/[id]/players/[playerId]/route.ts` | PATCH — set fixed board (admin). DELETE — admin removes a player, only while "setup" |
+| `src/app/admin/page.tsx` | Site-wide admin — every tournament across every user, read-only + delete. Gated by `SITE_ADMIN_PASSWORD` |
+| `src/lib/adminAuth.ts` | `checkAdminPassword()` shared by the site-admin login route and every gated site-admin route |
 
 ## Database
 
@@ -125,6 +127,44 @@ lives in the CSS class. Colour tokens are defined at the top of each file:
 - **Bye ordering**: byes must be appended *last* in all pairing functions so they appear at the bottom of the pairings table without a board number.
 - **Games ordering**: Prisma queries on games use `orderBy: { id: 'asc' }` to prevent reordering when results are entered.
 - **scoreStr half-point**: `0.5` renders as `½`, not `0½`.
+
+## Site admin
+
+`/admin` is a separate thing from a tournament's own admin link
+(`/t/[id]/admin/[token]`) - it's a single, site-wide, password-gated view (`SITE_ADMIN_PASSWORD`
+env var) listing **every** tournament ever created, across every user, with a delete button per
+tournament. Built after Harman noticed strangers ("Eclipse Chess") had started self-registering
+via the invite-link feature and wanted a way to check who's using the site without shelling into
+Postgres by hand each time - see git history around 2026-08-12 for the full story, including a
+DB-delete-via-hand-quoted-psql attempt that was correctly called out as risky before this page
+existed as the safer alternative.
+
+- **Auth**: `checkAdminPassword()` (`src/lib/adminAuth.ts`) does a direct string comparison
+  against `SITE_ADMIN_PASSWORD` - same trust model this app already uses for a tournament's own
+  `adminToken` (no hashing), just applied once, site-wide, instead of per-tournament. On success
+  `POST /api/admin/login` sets an `HttpOnly`/`Secure`/`SameSite=Lax` cookie (`site_admin_pw`,
+  `src/lib/adminAuth.ts`'s `ADMIN_COOKIE_NAME`) whose *value* is the password itself - every
+  gated route re-checks that cookie value with the same `checkAdminPassword()` function, so
+  there's exactly one place the comparison logic lives. If `SITE_ADMIN_PASSWORD` is unset,
+  `checkAdminPassword` always returns `false` - admin is disabled, not "open with no password."
+- **Data flow**: `src/app/admin/page.tsx` is a server component - it checks the cookie itself
+  and, if valid, queries every tournament (with players and a `_count` of generated rounds)
+  directly via Prisma and passes it to `AdminDashboard` (`src/components/AdminDashboard.tsx`) as
+  props. This mirrors `/t/[id]`'s own pattern (server-fetch → client component for
+  interactivity) rather than having the client component do its own `fetch` on mount - there's
+  deliberately no `GET /api/admin/tournaments` route, since nothing needs it: the initial load is
+  the server component's own query, and post-delete refresh is a plain `router.refresh()` (same
+  as every mutation elsewhere in this app), not a client-side re-fetch.
+- **Delete** (`DELETE /api/admin/tournaments/[id]`): unlike the per-tournament
+  `DELETE /api/tournaments/[id]/players/[playerId]` (admin-only, `"setup"`-only, see above), this
+  deletes a tournament **regardless of status** - active and complete tournaments too. Safe to do
+  unconditionally because `Player.tournamentId` and `Round.tournamentId` both cascade
+  (`onDelete: Cascade` in `schema.prisma`), and `Game.roundId` also cascades, so
+  `prisma.tournament.delete()` alone removes every dependent row in one statement - no manual
+  cleanup ordering needed. Gated behind a native `window.confirm()` in `AdminDashboard` that
+  names the tournament and its player count before deleting, since there's no undo.
+- **Not** the same page as a tournament's own admin link - that one stays a per-tournament
+  secret URL (`adminToken`) with no password, unrelated to `SITE_ADMIN_PASSWORD`.
 
 ## Formats
 
