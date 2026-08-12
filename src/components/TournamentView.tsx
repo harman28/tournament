@@ -325,13 +325,19 @@ export default function TournamentView({ tournament, standings, adminToken }: Pr
                     </div>
 
                     {joinedPlayer && (
-                      <div style={{ backgroundColor: `${ACCENT}0f`, border: `1px solid ${ACCENT}55`, borderRadius: 14, padding: '16px 18px' }}>
+                      <div style={{ backgroundColor: `${ACCENT}0f`, border: `1px solid ${ACCENT}55`, borderRadius: 14, padding: '16px 18px', marginBottom: 20 }}>
                         <span style={{ fontSize: 14, color: TEXT }}>Signed up as <strong style={{ color: ACCENT }}>{joinedPlayer.name}</strong>. Sit tight for the organiser to start.</span>
                       </div>
                     )}
+
+                    <JoinFields
+                      existingNames={tournament.players.map((p) => p.name)}
+                      onSubmit={joinTournament}
+                      submitLabel={joinedPlayer ? 'Add another player' : 'Join tournament'}
+                    />
                   </div>
 
-                  <RosterList players={tournament.players} isAdmin={false} onAdd={joinTournament} addPlaceholder="Your name" />
+                  <RosterList players={tournament.players} isAdmin={false} />
                 </>
               )}
             </div>
@@ -820,6 +826,57 @@ function AddPlayerRow({ onAdd, placeholder, existingNames, isFirst }: { onAdd: (
           Cancel
         </button>
       </div>
+    </form>
+  )
+}
+
+// ─── Registration fields (public setup state) ────────────────────────────────
+
+// Unlike the admin's roster-embedded AddPlayerRow (a collapsed affordance at
+// the end of a list of things the admin might not need to touch), this is
+// the single primary action a visitor to the invite link has - so it's
+// always open, sitting right under the "Join this tournament" heading
+// rather than folded into the roster on the other side of the page.
+function JoinFields({ existingNames, onSubmit, submitLabel }: { existingNames: string[]; onSubmit: (name: string, rating: number | null) => Promise<string | null>; submitLabel: string }) {
+  const [name, setName] = useState('')
+  const [rating, setRating] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+
+  const lowerExisting = existingNames.map((n) => n.trim().toLowerCase())
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault()
+    const trimmed = name.trim()
+    if (!trimmed) { setError('Enter your name'); return }
+    if (lowerExisting.includes(trimmed.toLowerCase())) { setError("That name's already taken - try adding a last initial"); return }
+    setSubmitting(true)
+    setError(null)
+    const ratingNum = rating.trim() ? Number(rating.trim()) : null
+    const err = await onSubmit(trimmed, ratingNum != null && !Number.isNaN(ratingNum) ? ratingNum : null)
+    setSubmitting(false)
+    if (err) { setError(err); return }
+    setName('')
+    setRating('')
+  }
+
+  return (
+    <form onSubmit={submit} style={{ backgroundColor: CARD, border: `1px solid ${BORDER}`, borderRadius: 14, padding: '16px 18px' }}>
+      <div style={{ display: 'flex', gap: 10 }}>
+        <input type="text" placeholder="Your name" value={name} onChange={(e) => setName(e.target.value)} autoFocus
+          style={{ flex: 1, minWidth: 0, backgroundColor: BG, border: `1.5px solid ${error ? '#ef4444' : BORDER}`, borderRadius: 10, padding: '12px 14px', color: TEXT, fontSize: 15, outline: 'none' }}
+          onFocus={(e) => (e.target.style.borderColor = ACCENT)}
+          onBlur={(e) => (e.target.style.borderColor = error ? '#ef4444' : BORDER)} />
+        <input type="number" placeholder="Rtg" value={rating} onChange={(e) => setRating(e.target.value)}
+          style={{ width: 68, backgroundColor: BG, border: `1.5px solid ${BORDER}`, borderRadius: 10, padding: '12px 14px', color: TEXT, fontSize: 15, outline: 'none' }}
+          onFocus={(e) => (e.target.style.borderColor = ACCENT)}
+          onBlur={(e) => (e.target.style.borderColor = BORDER)} />
+      </div>
+      {error && <p style={{ color: '#ef4444', fontSize: 13, margin: '8px 0 0' }}>{error}</p>}
+      <button type="submit" disabled={submitting}
+        style={{ width: '100%', backgroundColor: ACCENT, color: BG, fontWeight: 800, border: 'none', borderRadius: 10, padding: '13px', fontSize: 15, cursor: submitting ? 'not-allowed' : 'pointer', opacity: submitting ? 0.6 : 1, marginTop: 12 }}>
+        {submitting ? 'Joining…' : submitLabel}
+      </button>
     </form>
   )
 }
