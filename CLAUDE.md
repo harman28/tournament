@@ -22,7 +22,8 @@ A chess tournament management app supporting Swiss and Round Robin formats. Play
 | `src/lib/standings.ts` | `computeStandings()` — scores, Buchholz, shared ranks; `buildPlayerStates()` for Swiss re-pairing |
 | `src/lib/types.ts` | Shared TypeScript types (`TournamentData`, `StandingRow`, etc.) |
 | `src/app/page.tsx` | Tournament creation form |
-| `src/app/t/[id]/page.tsx` | Public tournament view (server component) |
+| `src/app/t/[id]/page.tsx` | Public tournament view (server component); also `generateMetadata()` + `tournamentDescription()` for link-preview title/description |
+| `src/app/t/[id]/opengraph-image.tsx` | Dynamic per-tournament WhatsApp/iMessage/Slack link-preview image (`next/og`) |
 | `src/app/t/[id]/admin/[token]/page.tsx` | Admin view — validates token, redirects to public if wrong |
 | `src/components/TournamentView.tsx` | Main client component — tabs, pairings, results, standings, modals |
 | `src/app/api/tournaments/route.ts` | POST — create tournament |
@@ -65,9 +66,12 @@ lives in the CSS class. Colour tokens are defined at the top of each file:
   tournament with zero pre-listed players and just share the invite link (the same URL as the
   public player link, `/t/[id]`). While a tournament is still `"setup"`, `POST
   /api/tournaments/[id]/players` requires no admin token at all — same trust model as the
-  link itself — so both the admin and anyone with the link can add players via the same
-  `JoinForm` component (`src/components/TournamentView.tsx`), just with different copy/labels.
-  This works for every format (swiss/rr/drr) since no round-1 schedule exists yet to disturb.
+  link itself — so both the admin and anyone with the link can add players, via
+  `AddPlayerRow` (admin, embedded as the last row of `RosterList`) or `JoinFields` (public,
+  under the "Join this tournament" heading) in `src/components/TournamentView.tsx` — same
+  endpoint, different placement since joining is the *primary* action for a visitor but a
+  secondary one for the organiser. This works for every format (swiss/rr/drr) since no
+  round-1 schedule exists yet to disturb.
   Once `"active"`, the same POST route switches to admin-only + Swiss-only (see "Late joiners"
   below) — self-signup is deliberately cut off the moment Start is pressed. Because players are
   no longer guaranteed by creation-time validation, `/start` now enforces the real minimum
@@ -100,6 +104,22 @@ lives in the CSS class. Colour tokens are defined at the top of each file:
   alongside `lastColor`) and preferring whoever is more "due" for white — self-corrects within
   one round even in the worst case, since whichever side extends its streak becomes *less* due
   next time, handing white to the other side before a real 3-in-a-row can happen.
+- **Invite-link previews**: `/t/[id]`'s `generateMetadata()` (title/description) and
+  `opengraph-image.tsx` (the image) drive the WhatsApp/iMessage/Slack/etc link-preview card
+  when the invite link is shared - same URL as self-signup, so this is what most people
+  actually see first. The image is generated per-request via `next/og`'s `ImageResponse`
+  (Satori under the hood) reading the tournament's name/format/rounds/player count/status
+  straight from Postgres - deliberately **no emoji and no custom font file**, since those
+  need `ImageResponse`'s `emoji` option to fetch glyphs from an external CDN at render time,
+  and this renders on every single share; same "can't fail on a missing dependency" instinct
+  behind chess-library-api's pre-rendered piece PNGs. If the tournament id doesn't resolve
+  (bad/stale link), the image route doesn't throw - it falls back to a generic "Chess
+  Tournament" branded card rather than a broken image. Neither `generateMetadata` nor the
+  image route needs `metadataBase` set: Next.js resolves the image's absolute URL from the
+  incoming request's own origin, so it's correct on localhost, staging, and production
+  without a hardcoded domain anywhere. The admin URL (`/t/[id]/admin/[token]`) intentionally
+  has no special metadata - it's not meant to be shared, so it just inherits the generic
+  root-layout title/description.
 - **Prisma 7 adapter**: `PrismaClient` must receive a `PrismaPg` adapter; the old `datasource url` field in schema is gone.
 - **Standings self-reference bug** (fixed): `computeStandings` originally used `.map()` and referenced `standings[i-1]` inside the callback — TDZ error. Fixed with `reduce`.
 - **Bye ordering**: byes must be appended *last* in all pairing functions so they appear at the bottom of the pairings table without a board number.

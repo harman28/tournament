@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import type { TournamentData, TournamentGame, TournamentPlayer, StandingRow } from '@/lib/types'
+import { formatLabel as getFormatLabel } from '@/lib/swiss'
 
 const BG     = '#09080a'
 const CARD   = '#130f08'
@@ -175,7 +176,7 @@ export default function TournamentView({ tournament, standings, adminToken }: Pr
   }
 
   const resultsRoundData = tournament.rounds.find((r) => r.number === resultsRound)
-  const formatLabel = tournament.format === 'rr' ? 'Round Robin' : tournament.format === 'drr' ? 'Double Round Robin' : 'Swiss'
+  const formatLabel = getFormatLabel(tournament.format)
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: BG, display: 'flex', flexDirection: 'column' }}>

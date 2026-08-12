@@ -5,6 +5,12 @@ export function recommendedRounds(playerCount: number, format: string = 'swiss')
   return Math.ceil(Math.log2(playerCount))
 }
 
+export function formatLabel(format: string): string {
+  if (format === 'rr') return 'Round Robin'
+  if (format === 'drr') return 'Double Round Robin'
+  return 'Swiss'
+}
+
 export type PairingPlayer = {
   id: string
   rating: number | null

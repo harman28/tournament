@@ -13,6 +13,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   recommendedRounds,
+  formatLabel,
   generateRound1Pairings,
   generatePairings,
   generateRoundRobinPairings,
@@ -83,6 +84,20 @@ describe('Recommended number of rounds', () => {
       expect(recommendedRounds(5, 'drr')).toBe(10) // 2 × 5
       expect(recommendedRounds(6, 'drr')).toBe(10) // 2 × (6−1)
     })
+  })
+})
+
+// ─── Format labels ────────────────────────────────────────────────────────────
+
+describe('formatLabel', () => {
+  it('maps each stored format value to its display name', () => {
+    expect(formatLabel('swiss')).toBe('Swiss')
+    expect(formatLabel('rr')).toBe('Round Robin')
+    expect(formatLabel('drr')).toBe('Double Round Robin')
+  })
+
+  it('falls back to "Swiss" for an unrecognised value', () => {
+    expect(formatLabel('elimination')).toBe('Swiss')
   })
 })
 
