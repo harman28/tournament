@@ -36,7 +36,6 @@ export default function TournamentView({ tournament, standings, adminToken }: Pr
   const [optimistic, setOptimistic] = useState<Record<string, string>>({})
   const [addPlayerOpen, setAddPlayerOpen] = useState(false)
   const [joinedPlayer, setJoinedPlayer] = useState<{ id: string; name: string } | null>(null)
-  const [showJoinForm, setShowJoinForm] = useState(false)
 
   const currentRound = tournament.rounds[tournament.rounds.length - 1]
   const roundsComplete = tournament.rounds.filter((r) => r.status === 'complete').length
@@ -158,7 +157,6 @@ export default function TournamentView({ tournament, standings, adminToken }: Pr
     const player = { id: body.player.id as string, name: body.player.name as string }
     localStorage.setItem(`joined:${tournament.id}`, JSON.stringify(player))
     setJoinedPlayer(player)
-    setShowJoinForm(false)
     router.refresh()
     return null
   }
@@ -271,90 +269,72 @@ export default function TournamentView({ tournament, standings, adminToken }: Pr
       {/* ── Setup state ────────────────────────────────────────────── */}
       {tournament.status === 'setup' && (
         <div style={{ flex: 1, padding: '32px 16px' }}>
-          <div style={{ maxWidth: 480, margin: '0 auto' }} className="fade-up">
-            {isAdmin ? (
-              <>
-                <div style={{ textAlign: 'center', marginBottom: 28 }}>
-                  <div style={{ fontSize: 44, marginBottom: 12 }}>🏁</div>
-                  <h2 style={{ fontSize: 22, fontWeight: 800, color: TEXT, margin: '0 0 8px' }}>Ready to start</h2>
-                  <p style={{ color: MUTED, lineHeight: 1.6 }}>{tournament.players.length} players · {tournament.numRounds} rounds · {formatLabel}</p>
-                </div>
+          <div className="setup-container fade-up" style={{ margin: '0 auto' }}>
+            <div className="setup-grid">
+              {isAdmin ? (
+                <>
+                  <div>
+                    <div style={{ textAlign: 'center', marginBottom: 28 }}>
+                      <div style={{ fontSize: 44, marginBottom: 12 }}>🏁</div>
+                      <h2 style={{ fontSize: 22, fontWeight: 800, color: TEXT, margin: '0 0 8px' }}>Ready to start</h2>
+                      <p style={{ color: MUTED, lineHeight: 1.6 }}>{tournament.players.length} players · {tournament.numRounds} rounds · {formatLabel}</p>
+                    </div>
 
-                {/* Two links explanation */}
-                <div style={{ backgroundColor: CARD, border: `1px solid ${BORDER}`, borderRadius: 14, padding: '18px', marginBottom: 20 }}>
-                  <p style={{ fontSize: 13, fontWeight: 700, color: TEXT, marginBottom: 14 }}>Two links, two roles</p>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                    <div style={{ display: 'flex', gap: 12 }}>
-                      <span style={{ fontSize: 22 }}>🔗</span>
-                      <div>
-                        <p style={{ fontSize: 13, fontWeight: 700, color: ACCENT, margin: '0 0 3px' }}>Invite link</p>
-                        <p style={{ fontSize: 12, color: MUTED, margin: 0 }}>Share with everyone. Before you start, anyone with the link can add themselves - no account needed. Once running, it&apos;s also how they view pairings, standings, and submit results for your approval.</p>
+                    {/* Two links explanation */}
+                    <div style={{ backgroundColor: CARD, border: `1px solid ${BORDER}`, borderRadius: 14, padding: '18px', marginBottom: 20 }}>
+                      <p style={{ fontSize: 13, fontWeight: 700, color: TEXT, marginBottom: 14 }}>Two links, two roles</p>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                        <div style={{ display: 'flex', gap: 12 }}>
+                          <span style={{ fontSize: 22 }}>🔗</span>
+                          <div>
+                            <p style={{ fontSize: 13, fontWeight: 700, color: ACCENT, margin: '0 0 3px' }}>Invite link</p>
+                            <p style={{ fontSize: 12, color: MUTED, margin: 0 }}>Share with everyone. Before you start, anyone with the link can add themselves - no account needed. Once running, it&apos;s also how they view pairings, standings, and submit results for your approval.</p>
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: 12 }}>
+                          <span style={{ fontSize: 22 }}>🔐</span>
+                          <div>
+                            <p style={{ fontSize: 13, fontWeight: 700, color: AMBER, margin: '0 0 3px' }}>Admin link (this page)</p>
+                            <p style={{ fontSize: 12, color: MUTED, margin: 0 }}>Keep private. Approve results, enter results directly, and advance rounds.</p>
+                          </div>
+                        </div>
                       </div>
                     </div>
-                    <div style={{ display: 'flex', gap: 12 }}>
-                      <span style={{ fontSize: 22 }}>🔐</span>
-                      <div>
-                        <p style={{ fontSize: 13, fontWeight: 700, color: AMBER, margin: '0 0 3px' }}>Admin link (this page)</p>
-                        <p style={{ fontSize: 12, color: MUTED, margin: 0 }}>Keep private. Approve results, enter results directly, and advance rounds.</p>
-                      </div>
-                    </div>
+
+                    <button onClick={startTournament} disabled={actionLoading}
+                      style={{ width: '100%', backgroundColor: ACCENT, color: BG, fontWeight: 800, border: 'none', borderRadius: 14, padding: '16px', fontSize: 16, cursor: actionLoading ? 'not-allowed' : 'pointer', opacity: actionLoading ? 0.6 : 1, marginBottom: 10 }}>
+                      {actionLoading ? 'Starting…' : 'Start Tournament →'}
+                    </button>
+                    <button onClick={copyLink}
+                      style={{ width: '100%', backgroundColor: 'transparent', border: `1px solid ${BORDER}`, color: MUTED, borderRadius: 14, padding: '13px', fontSize: 14, cursor: 'pointer' }}>
+                      {copied ? '✓ Invite link copied!' : 'Copy invite link'}
+                    </button>
                   </div>
-                </div>
 
-                <button onClick={startTournament} disabled={actionLoading}
-                  style={{ width: '100%', backgroundColor: ACCENT, color: BG, fontWeight: 800, border: 'none', borderRadius: 14, padding: '16px', fontSize: 16, cursor: actionLoading ? 'not-allowed' : 'pointer', opacity: actionLoading ? 0.6 : 1, marginBottom: 10 }}>
-                  {actionLoading ? 'Starting…' : 'Start Tournament →'}
-                </button>
-                <button onClick={copyLink}
-                  style={{ width: '100%', backgroundColor: 'transparent', border: `1px solid ${BORDER}`, color: MUTED, borderRadius: 14, padding: '13px', fontSize: 14, cursor: 'pointer', marginBottom: 20 }}>
-                  {copied ? '✓ Invite link copied!' : 'Copy invite link'}
-                </button>
+                  <RosterList players={tournament.players} isAdmin onRemove={removePlayer} onAdd={addPlayer} addPlaceholder="Player name" />
+                </>
+              ) : (
+                <>
+                  <div>
+                    <div style={{ textAlign: 'center', marginBottom: 28 }}>
+                      <div style={{ fontSize: 44, marginBottom: 12 }}>⏳</div>
+                      <h2 style={{ fontSize: 22, fontWeight: 800, color: TEXT, margin: '0 0 8px' }}>
+                        {joinedPlayer ? "You're in!" : 'Join this tournament'}
+                      </h2>
+                      <p style={{ color: MUTED, lineHeight: 1.6 }}>{tournament.players.length} players · {tournament.numRounds} rounds · {formatLabel}</p>
+                    </div>
 
-                <JoinForm
-                  existingNames={tournament.players.map((p) => p.name)}
-                  onSubmit={addPlayer}
-                  namePlaceholder="Add a player by name"
-                  submitLabel="Add player"
-                  submittingLabel="Adding…"
-                />
-
-                <RosterList players={tournament.players} isAdmin onRemove={removePlayer} />
-              </>
-            ) : (
-              <>
-                <div style={{ textAlign: 'center', marginBottom: 28 }}>
-                  <div style={{ fontSize: 44, marginBottom: 12 }}>⏳</div>
-                  <h2 style={{ fontSize: 22, fontWeight: 800, color: TEXT, margin: '0 0 8px' }}>
-                    {joinedPlayer ? "You're in!" : 'Join this tournament'}
-                  </h2>
-                  <p style={{ color: MUTED, lineHeight: 1.6 }}>{tournament.players.length} players · {tournament.numRounds} rounds · {formatLabel}</p>
-                </div>
-
-                {joinedPlayer ? (
-                  <div style={{ backgroundColor: `${ACCENT}0f`, border: `1px solid ${ACCENT}55`, borderRadius: 14, padding: '16px 18px', marginBottom: 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-                    <span style={{ fontSize: 14, color: TEXT }}>Signed up as <strong style={{ color: ACCENT }}>{joinedPlayer.name}</strong>. Sit tight for the organiser to start.</span>
-                    {!showJoinForm && (
-                      <button onClick={() => setShowJoinForm(true)}
-                        style={{ fontSize: 12, fontWeight: 700, color: MUTED, background: 'none', border: 'none', textDecoration: 'underline', textUnderlineOffset: 2, cursor: 'pointer', whiteSpace: 'nowrap', padding: 0 }}>
-                        + add another
-                      </button>
+                    {joinedPlayer && (
+                      <div style={{ backgroundColor: `${ACCENT}0f`, border: `1px solid ${ACCENT}55`, borderRadius: 14, padding: '16px 18px' }}>
+                        <span style={{ fontSize: 14, color: TEXT }}>Signed up as <strong style={{ color: ACCENT }}>{joinedPlayer.name}</strong>. Sit tight for the organiser to start.</span>
+                      </div>
                     )}
                   </div>
-                ) : null}
 
-                {(!joinedPlayer || showJoinForm) && (
-                  <JoinForm
-                    existingNames={tournament.players.map((p) => p.name)}
-                    onSubmit={joinTournament}
-                    onCancel={joinedPlayer ? () => setShowJoinForm(false) : undefined}
-                  />
-                )}
-
-                <div style={{ marginTop: 20 }}>
-                  <RosterList players={tournament.players} isAdmin={false} />
-                </div>
-              </>
-            )}
+                  <RosterList players={tournament.players} isAdmin={false} onAdd={joinTournament} addPlaceholder="Your name" />
+                </>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -736,7 +716,15 @@ function AddPlayerModal({ nextRoundNumber, onClose, onSubmit }: { nextRoundNumbe
 
 // ─── Roster list (setup state) ───────────────────────────────────────────────
 
-function RosterList({ players, isAdmin, onRemove }: { players: TournamentPlayer[]; isAdmin: boolean; onRemove?: (id: string) => void }) {
+function RosterList({
+  players, isAdmin, onRemove, onAdd, addPlaceholder = 'Player name',
+}: {
+  players: TournamentPlayer[]
+  isAdmin: boolean
+  onRemove?: (id: string) => void
+  onAdd?: (name: string, rating: number | null) => Promise<string | null>
+  addPlaceholder?: string
+}) {
   return (
     <div style={{ backgroundColor: CARD, border: `1px solid ${BORDER}`, borderRadius: 14, overflow: 'hidden' }}>
       <div style={{ padding: '12px 16px', borderBottom: `1px solid ${BORDER}` }}>
@@ -744,7 +732,7 @@ function RosterList({ players, isAdmin, onRemove }: { players: TournamentPlayer[
           {players.length} player{players.length === 1 ? '' : 's'} registered
         </span>
       </div>
-      {players.length === 0 && (
+      {players.length === 0 && !onAdd && (
         <div style={{ padding: '16px', backgroundColor: ROW, textAlign: 'center', color: MUTED, fontSize: 13 }}>
           No one yet - share the invite link to get started.
         </div>
@@ -764,13 +752,18 @@ function RosterList({ players, isAdmin, onRemove }: { players: TournamentPlayer[
           </div>
         </div>
       ))}
+      {onAdd && (
+        <AddPlayerRow onAdd={onAdd} placeholder={addPlaceholder} existingNames={players.map((p) => p.name)} isFirst={players.length === 0} />
+      )}
     </div>
   )
 }
 
-// ─── Join form (public setup state - self-signup via the invite link) ───────
-
-function JoinForm({ existingNames, onSubmit, onCancel, namePlaceholder = 'Your name', submitLabel = 'Join tournament', submittingLabel = 'Joining…' }: { existingNames: string[]; onSubmit: (name: string, rating: number | null) => Promise<string | null>; onCancel?: () => void; namePlaceholder?: string; submitLabel?: string; submittingLabel?: string }) {
+// The "add" affordance lives as the last row of the roster itself, rather
+// than a separate form above/below the list - one continuous list of
+// players with the option to add more right at the end of it.
+function AddPlayerRow({ onAdd, placeholder, existingNames, isFirst }: { onAdd: (name: string, rating: number | null) => Promise<string | null>; placeholder: string; existingNames: string[]; isFirst: boolean }) {
+  const [open, setOpen] = useState(false)
   const [name, setName] = useState('')
   const [rating, setRating] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -786,36 +779,46 @@ function JoinForm({ existingNames, onSubmit, onCancel, namePlaceholder = 'Your n
     setSubmitting(true)
     setError(null)
     const ratingNum = rating.trim() ? Number(rating.trim()) : null
-    const err = await onSubmit(trimmed, ratingNum != null && !Number.isNaN(ratingNum) ? ratingNum : null)
+    const err = await onAdd(trimmed, ratingNum != null && !Number.isNaN(ratingNum) ? ratingNum : null)
     setSubmitting(false)
-    if (err) setError(err)
-    else { setName(''); setRating('') }
+    if (err) { setError(err); return }
+    setName('')
+    setRating('')
+    setOpen(false)
+  }
+
+  if (!open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)}
+        style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '12px 16px', borderTop: isFirst ? 'none' : `1px solid ${BORDER}`, backgroundColor: 'transparent', border: 'none', borderTopWidth: isFirst ? 0 : 1, borderTopStyle: 'solid', borderTopColor: BORDER, color: ACCENT, fontSize: 14, fontWeight: 700, cursor: 'pointer', textAlign: 'left' }}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 20, height: 20, borderRadius: 6, border: `1.5px dashed ${ACCENT}`, fontSize: 14, fontWeight: 400 }}>+</span>
+        Add player
+      </button>
+    )
   }
 
   return (
-    <form onSubmit={submit} style={{ backgroundColor: CARD, border: `1px solid ${BORDER}`, borderRadius: 14, padding: '16px 18px', marginBottom: 20 }}>
-      <div style={{ display: 'flex', gap: 10 }}>
-        <input type="text" placeholder={namePlaceholder} value={name} onChange={(e) => setName(e.target.value)} autoFocus
-          style={{ flex: 1, minWidth: 0, backgroundColor: BG, border: `1.5px solid ${error ? '#ef4444' : BORDER}`, borderRadius: 10, padding: '12px 14px', color: TEXT, fontSize: 15, outline: 'none' }}
+    <form onSubmit={submit} style={{ padding: '12px 16px', borderTop: isFirst ? 'none' : `1px solid ${BORDER}` }}>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <input type="text" placeholder={placeholder} value={name} onChange={(e) => setName(e.target.value)} autoFocus
+          style={{ flex: 1, minWidth: 0, backgroundColor: BG, border: `1.5px solid ${error ? '#ef4444' : BORDER}`, borderRadius: 10, padding: '10px 12px', color: TEXT, fontSize: 14, outline: 'none' }}
           onFocus={(e) => (e.target.style.borderColor = ACCENT)}
           onBlur={(e) => (e.target.style.borderColor = error ? '#ef4444' : BORDER)} />
         <input type="number" placeholder="Rtg" value={rating} onChange={(e) => setRating(e.target.value)}
-          style={{ width: 68, backgroundColor: BG, border: `1.5px solid ${BORDER}`, borderRadius: 10, padding: '12px 14px', color: TEXT, fontSize: 15, outline: 'none' }}
+          style={{ width: 60, backgroundColor: BG, border: `1.5px solid ${BORDER}`, borderRadius: 10, padding: '10px 12px', color: TEXT, fontSize: 14, outline: 'none' }}
           onFocus={(e) => (e.target.style.borderColor = ACCENT)}
           onBlur={(e) => (e.target.style.borderColor = BORDER)} />
       </div>
-      {error && <p style={{ color: '#ef4444', fontSize: 13, margin: '8px 0 0' }}>{error}</p>}
-      <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+      {error && <p style={{ color: '#ef4444', fontSize: 12, margin: '6px 0 0' }}>{error}</p>}
+      <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
         <button type="submit" disabled={submitting}
-          style={{ flex: 1, backgroundColor: ACCENT, color: BG, fontWeight: 800, border: 'none', borderRadius: 10, padding: '13px', fontSize: 15, cursor: submitting ? 'not-allowed' : 'pointer', opacity: submitting ? 0.6 : 1 }}>
-          {submitting ? submittingLabel : submitLabel}
+          style={{ flex: 1, backgroundColor: ACCENT, color: BG, fontWeight: 800, border: 'none', borderRadius: 9, padding: '10px', fontSize: 14, cursor: submitting ? 'not-allowed' : 'pointer', opacity: submitting ? 0.6 : 1 }}>
+          {submitting ? 'Adding…' : 'Add'}
         </button>
-        {onCancel && (
-          <button type="button" onClick={onCancel}
-            style={{ backgroundColor: 'transparent', border: `1px solid ${BORDER}`, color: MUTED, borderRadius: 10, padding: '13px 16px', fontSize: 14, cursor: 'pointer' }}>
-            Cancel
-          </button>
-        )}
+        <button type="button" onClick={() => { setOpen(false); setError(null) }}
+          style={{ backgroundColor: 'transparent', border: `1px solid ${BORDER}`, color: MUTED, borderRadius: 9, padding: '10px 14px', fontSize: 14, cursor: 'pointer' }}>
+          Cancel
+        </button>
       </div>
     </form>
   )
