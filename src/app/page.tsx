@@ -200,10 +200,6 @@ export default function Home() {
                 )}
               </div>
             )}
-            <p style={{ fontSize: 12, color: MUTED, marginTop: 8 }}>
-              Leave this empty and share the invite link instead - anyone with the link can add
-              themselves before you start.
-            </p>
           </Field>
 
           {/* Rounds */}
