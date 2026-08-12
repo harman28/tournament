@@ -288,7 +288,7 @@ export default function TournamentView({ tournament, standings, adminToken }: Pr
                           <span style={{ fontSize: 22 }}>🔗</span>
                           <div>
                             <p style={{ fontSize: 13, fontWeight: 700, color: ACCENT, margin: '0 0 3px' }}>Invite link</p>
-                            <p style={{ fontSize: 12, color: MUTED, margin: 0 }}>Share with everyone. Before you start, anyone with the link can add themselves - no account needed. Once running, it&apos;s also how they view pairings, standings, and submit results for your approval.</p>
+                            <p style={{ fontSize: 12, color: MUTED, margin: 0 }}>Share with all players. They can register for the tournament, view pairings, standings, and submit results for your approval.</p>
                           </div>
                         </div>
                         <div style={{ display: 'flex', gap: 12 }}>
