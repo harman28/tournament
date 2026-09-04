@@ -30,6 +30,7 @@ A chess tournament management app supporting Swiss and Round Robin formats. Play
 | `src/app/api/tournaments/[id]/route.ts` | GET — fetch tournament data |
 | `src/app/api/tournaments/[id]/start/route.ts` | POST — generate round 1, set status=active |
 | `src/app/api/tournaments/[id]/next-round/route.ts` | POST — complete current round, generate next (or finish tournament) |
+| `src/app/api/tournaments/[id]/undo-round/route.ts` | POST — admin deletes the latest round so it can be regenerated (e.g. after fixing an earlier result) |
 | `src/app/api/tournaments/[id]/games/[gameId]/result/route.ts` | POST (player → pending) / PATCH (admin → direct) |
 | `src/app/api/tournaments/[id]/games/[gameId]/approve/route.ts` | POST — admin approves or rejects a pending result |
 | `src/app/api/tournaments/[id]/players/route.ts` | POST — self-signup (no token, any format, only while "setup") or admin late-join (token required, Swiss only, only while "active") |
@@ -122,6 +123,22 @@ lives in the CSS class. Colour tokens are defined at the top of each file:
   without a hardcoded domain anywhere. The admin URL (`/t/[id]/admin/[token]`) intentionally
   has no special metadata - it's not meant to be shared, so it just inherits the generic
   root-layout title/description.
+- **Undoing a round** (`POST /api/tournaments/[id]/undo-round`, admin-only): real feedback from
+  a live tournament ("Zwart op Wit") - a result got entered wrong in an earlier round, but
+  wasn't caught until the *next* round had already been generated (and partly played) from that
+  wrong data. Fixing a past result was already possible at any time - the admin `PATCH` on
+  `games/[gameId]/result` never checked round status or `game.result` before overwriting. What
+  was missing was the other half: discarding the round that got generated from the bad data, so
+  Next Round can regenerate it from the corrected standings. This route always deletes the
+  single *latest* round (never an arbitrary earlier one - anything after that round would still
+  be built on data that's about to change) and works regardless of whether that round is
+  untouched, partly played, or fully played - `Round`→`Game` cascades
+  (`schema.prisma`), so one `prisma.round.delete()` is enough. Reverts `Tournament.status` to
+  `"setup"` if that was the only round, otherwise `"active"` (covers reopening a `"complete"`
+  tournament by undoing its final round). Repeatable - calling it again peels back one more
+  round. The UI button (`TournamentView.tsx`, next to the round-advance button) is a plain
+  `window.confirm()` naming the round number and how many results would be discarded, not a
+  custom modal - this is a rare recovery action, not a frequent one.
 - **Prisma 7 adapter**: `PrismaClient` must receive a `PrismaPg` adapter; the old `datasource url` field in schema is gone.
 - **Standings self-reference bug** (fixed): `computeStandings` originally used `.map()` and referenced `standings[i-1]` inside the callback — TDZ error. Fixed with `reduce`.
 - **Bye ordering**: byes must be appended *last* in all pairing functions so they appear at the bottom of the pairings table without a board number.

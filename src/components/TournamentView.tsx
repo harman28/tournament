@@ -100,6 +100,23 @@ export default function TournamentView({ tournament, standings, adminToken }: Pr
     setActionLoading(false)
   }
 
+  async function undoLastRound() {
+    if (!currentRound) return
+    const entered = currentRound.games.filter((g) => g.result).length
+    const warning = entered > 0
+      ? ` ${entered} result${entered === 1 ? '' : 's'} already entered in it will be lost too.`
+      : ''
+    if (!window.confirm(`Undo Round ${currentRound.number}? This deletes its pairings.${warning} Fix a result in an earlier round, then generate pairings again.`))
+      return
+    setActionLoading(true)
+    await fetch(`/api/tournaments/${tournament.id}/undo-round`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ adminToken }),
+    })
+    router.refresh()
+    setActionLoading(false)
+  }
+
   function submitResult(gameId: string, result: string, name: string) {
     // Close modal and apply optimistic update immediately
     setModal(null)
@@ -248,11 +265,20 @@ export default function TournamentView({ tournament, standings, adminToken }: Pr
                 <span style={{ fontSize: 26, fontWeight: 900, color: TEXT, letterSpacing: '-0.5px' }}>Round {currentRound.number}</span>
                 <span style={{ fontSize: 18, fontWeight: 400, color: MUTED }}> / {tournament.numRounds}</span>
               </div>
-              {isAdmin && tournament.status === 'active' && currentRoundComplete && (
-                <button onClick={nextRound} disabled={actionLoading}
-                  style={{ backgroundColor: ACCENT, color: BG, fontWeight: 800, border: 'none', borderRadius: 10, padding: '10px 18px', fontSize: 14, cursor: actionLoading ? 'not-allowed' : 'pointer', opacity: actionLoading ? 0.6 : 1 }}>
-                  {actionLoading ? '…' : allDone ? '🏆 Complete' : `Round ${currentRound.number + 1} →`}
-                </button>
+              {isAdmin && (tournament.status === 'active' || tournament.status === 'complete') && (
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button onClick={undoLastRound} disabled={actionLoading}
+                    title={`Undo Round ${currentRound.number} - e.g. to fix a result entered wrong in an earlier round`}
+                    style={{ backgroundColor: 'transparent', border: `1px solid ${BORDER}`, color: MUTED, fontWeight: 700, borderRadius: 10, padding: '10px 14px', fontSize: 13, cursor: actionLoading ? 'not-allowed' : 'pointer', opacity: actionLoading ? 0.6 : 1 }}>
+                    ↺ Undo Round {currentRound.number}
+                  </button>
+                  {tournament.status === 'active' && currentRoundComplete && (
+                    <button onClick={nextRound} disabled={actionLoading}
+                      style={{ backgroundColor: ACCENT, color: BG, fontWeight: 800, border: 'none', borderRadius: 10, padding: '10px 18px', fontSize: 14, cursor: actionLoading ? 'not-allowed' : 'pointer', opacity: actionLoading ? 0.6 : 1 }}>
+                      {actionLoading ? '…' : allDone ? '🏆 Complete' : `Round ${currentRound.number + 1} →`}
+                    </button>
+                  )}
+                </div>
               )}
             </div>
             <div style={{ display: 'flex', gap: 4 }}>
