@@ -16,6 +16,7 @@ const DIM    = '#96803f'
 type AdminPlayer = { id: string; name: string; rating: number | null; seed: number }
 type AdminTournament = {
   id: string
+  adminToken: string
   name: string
   format: string
   status: string
@@ -29,6 +30,13 @@ export default function AdminDashboard({ tournaments }: { tournaments: AdminTour
   const router = useRouter()
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [copiedKey, setCopiedKey] = useState<string | null>(null)
+
+  function copyLink(key: string, path: string) {
+    navigator.clipboard.writeText(`${window.location.origin}${path}`)
+    setCopiedKey(key)
+    setTimeout(() => setCopiedKey((k) => (k === key ? null : k)), 2000)
+  }
 
   function toggle(id: string) {
     setExpanded((prev) => {
@@ -104,6 +112,12 @@ export default function AdminDashboard({ tournaments }: { tournaments: AdminTour
                     <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: MUTED, marginBottom: 8 }}>
                       {t.numRounds} rounds configured · {t._count.rounds} generated · id {t.id}
                     </p>
+                    <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+                      <LinkButton label="Player link" href={`/t/${t.id}`}
+                        copied={copiedKey === `${t.id}:player`} onCopy={() => copyLink(`${t.id}:player`, `/t/${t.id}`)} />
+                      <LinkButton label="Admin link" href={`/t/${t.id}/admin/${t.adminToken}`}
+                        copied={copiedKey === `${t.id}:admin`} onCopy={() => copyLink(`${t.id}:admin`, `/t/${t.id}/admin/${t.adminToken}`)} />
+                    </div>
                     {t.players.length === 0 ? (
                       <p style={{ color: MUTED, fontSize: 13 }}>No players registered.</p>
                     ) : (
@@ -131,4 +145,24 @@ export default function AdminDashboard({ tournaments }: { tournaments: AdminTour
 function StatusBadge({ status }: { status: string }) {
   const color = status === 'active' ? ACCENT : status === 'complete' ? MUTED : DIM
   return <span style={{ fontSize: 12, fontWeight: 700, color, textTransform: 'capitalize' }}>{status}</span>
+}
+
+// Opens the actual page (relative href - works regardless of which domain
+// this admin page itself is being viewed from) alongside a copy button that
+// puts the full absolute URL on the clipboard (window.location.origin is
+// only read inside the click handler, never during render, so this stays
+// SSR-safe).
+function LinkButton({ label, href, copied, onCopy }: { label: string; href: string; copied: boolean; onCopy: () => void }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 4, border: `1px solid ${BORDER}`, borderRadius: 8, overflow: 'hidden' }}>
+      <a href={href} target="_blank" rel="noopener noreferrer"
+        style={{ fontSize: 12, fontWeight: 700, color: ACCENT, padding: '6px 10px', textDecoration: 'none' }}>
+        {label} ↗
+      </a>
+      <button type="button" onClick={onCopy}
+        style={{ fontSize: 11, color: copied ? ACCENT : MUTED, background: 'none', border: 'none', borderLeft: `1px solid ${BORDER}`, padding: '6px 10px', cursor: 'pointer' }}>
+        {copied ? '✓ Copied' : 'Copy'}
+      </button>
+    </div>
+  )
 }

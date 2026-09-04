@@ -192,6 +192,14 @@ existed as the safer alternative.
   names the tournament and its player count before deleting, since there's no undo.
 - **Not** the same page as a tournament's own admin link - that one stays a per-tournament
   secret URL (`adminToken`) with no password, unrelated to `SITE_ADMIN_PASSWORD`.
+- **Player/admin links** (`AdminDashboard`'s expanded row): `t.adminToken` reaches the client
+  fine with no extra work - `prisma.tournament.findMany()` in `page.tsx` has no `select`, so
+  every scalar field (including `adminToken`) is already on the object, it just wasn't in the
+  `AdminTournament` type until this was added. `LinkButton` opens the actual page via a
+  *relative* `href` (`/t/[id]`, `/t/[id]/admin/[adminToken]`) - correct no matter which domain
+  `/admin` itself happens to be viewed from - and separately builds an absolute URL for the
+  clipboard using `window.location.origin`, read only inside the click handler so it stays
+  SSR-safe (never touched during render, where `window` doesn't exist yet).
 
 ## Formats
 
