@@ -141,6 +141,16 @@ lives in the CSS class. Colour tokens are defined at the top of each file:
   custom modal - this is a rare recovery action, not a frequent one.
 - **Prisma 7 adapter**: `PrismaClient` must receive a `PrismaPg` adapter; the old `datasource url` field in schema is gone.
 - **Standings self-reference bug** (fixed): `computeStandings` originally used `.map()` and referenced `standings[i-1]` inside the callback — TDZ error. Fixed with `reduce`.
+- **Fixed board pins are settable pre-start, not just from the Standings tab**: `BoardPin`
+  (used by `StandingsTable` once the tournament is running) is also embedded directly in
+  `RosterList`'s admin rows during `"setup"` (real feedback: a streamer's board pin only ever
+  took effect "from next round," which meant it could never apply to Round 1 itself, since
+  there was no UI to set it before Round 1 was generated). The backend
+  (`PATCH /api/tournaments/[id]/players/[playerId]`) never had a status restriction - this was
+  purely a missing pre-start affordance. `BoardPin` takes an `applyNote` prop (default `"from
+  next round"`, used by the Standings tab) so the setup-state copy can correctly say `"from
+  Round 1"` instead - there's no "current round" yet pre-start, so the original wording would
+  have been misleading there.
 - **Bye ordering**: byes must be appended *last* in all pairing functions so they appear at the bottom of the pairings table without a board number.
 - **Games ordering**: Prisma queries on games use `orderBy: { id: 'asc' }` to prevent reordering when results are entered.
 - **scoreStr half-point**: `0.5` renders as `½`, not `0½`.

@@ -338,7 +338,7 @@ export default function TournamentView({ tournament, standings, adminToken }: Pr
                     </button>
                   </div>
 
-                  <RosterList players={tournament.players} isAdmin onRemove={removePlayer} onAdd={addPlayer} addPlaceholder="Player name" />
+                  <RosterList players={tournament.players} isAdmin onRemove={removePlayer} onAdd={addPlayer} addPlaceholder="Player name" onSetFixedBoard={setFixedBoard} />
                 </>
               ) : (
                 <>
@@ -581,7 +581,7 @@ function PinIcon({ filled }: { filled: boolean }) {
   )
 }
 
-function BoardPin({ player, onSet }: { player: TournamentPlayer; onSet: (v: number | null) => void }) {
+function BoardPin({ player, onSet, applyNote = 'from next round' }: { player: TournamentPlayer; onSet: (v: number | null) => void; applyNote?: string }) {
   const [editing, setEditing] = useState(false)
   const [val, setVal] = useState(player.fixedBoard != null ? String(player.fixedBoard) : '')
 
@@ -598,17 +598,19 @@ function BoardPin({ player, onSet }: { player: TournamentPlayer; onSet: (v: numb
           style={{ width: 44, backgroundColor: BG, border: `1px solid ${ACCENT}`, borderRadius: 6, padding: '3px 4px', color: TEXT, fontSize: 12, textAlign: 'center', outline: 'none' }}
           onKeyDown={(e) => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false) }}
           onBlur={commit} />
-        {/* A pin never affects the round already in progress - only calls this
+        {/* A pin never affects a round already generated - only calls this
             out here, at the moment it's set, so it doesn't read as "nothing
-            happened" when the current round's pairings don't change. */}
-        <span style={{ fontSize: 9, color: MUTED, whiteSpace: 'nowrap', lineHeight: 1 }}>from next round</span>
+            happened" when an already-generated round's pairings don't change.
+            Pre-start (RosterList) there's no round yet, so the wording is
+            different - "from Round 1" rather than "from next round". */}
+        <span style={{ fontSize: 9, color: MUTED, whiteSpace: 'nowrap', lineHeight: 1 }}>{applyNote}</span>
       </div>
     )
   }
 
   return (
     <button type="button" onClick={() => setEditing(true)}
-      title={player.fixedBoard ? `Fixed to board ${player.fixedBoard} - applies from next round` : "Fix this player's board number"}
+      title={player.fixedBoard ? `Fixed to board ${player.fixedBoard} - applies ${applyNote}` : "Fix this player's board number"}
       style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: 'none', border: 'none', color: player.fixedBoard ? ACCENT : MUTED, fontSize: 12, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer', padding: 0, opacity: player.fixedBoard ? 1 : 0.5 }}>
       <PinIcon filled={!!player.fixedBoard} />
       {player.fixedBoard ?? ''}
@@ -750,13 +752,14 @@ function AddPlayerModal({ nextRoundNumber, onClose, onSubmit }: { nextRoundNumbe
 // ─── Roster list (setup state) ───────────────────────────────────────────────
 
 function RosterList({
-  players, isAdmin, onRemove, onAdd, addPlaceholder = 'Player name',
+  players, isAdmin, onRemove, onAdd, addPlaceholder = 'Player name', onSetFixedBoard,
 }: {
   players: TournamentPlayer[]
   isAdmin: boolean
   onRemove?: (id: string) => void
   onAdd?: (name: string, rating: number | null) => Promise<string | null>
   addPlaceholder?: string
+  onSetFixedBoard?: (playerId: string, fixedBoard: number | null) => void
 }) {
   return (
     <div style={{ backgroundColor: CARD, border: `1px solid ${BORDER}`, borderRadius: 14, overflow: 'hidden' }}>
@@ -778,6 +781,9 @@ function RosterList({
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             {p.rating && <span style={{ fontSize: 13, color: MUTED }}>{p.rating}</span>}
+            {isAdmin && onSetFixedBoard && (
+              <BoardPin player={p} onSet={(v) => onSetFixedBoard(p.id, v)} applyNote="from Round 1" />
+            )}
             {isAdmin && onRemove && (
               <button type="button" onClick={() => onRemove(p.id)} title={`Remove ${p.name}`}
                 style={{ background: 'none', border: 'none', color: MUTED, fontSize: 18, cursor: 'pointer', lineHeight: 1, padding: 0 }}>×</button>
