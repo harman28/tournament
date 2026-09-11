@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { isValidAdminToken } from '@/lib/auth'
 
 const VALID_RESULTS = ['1-0', '0-1', '1/2-1/2']
 
@@ -57,7 +58,7 @@ export async function PATCH(
   if (!game || game.round.tournamentId !== id) {
     return Response.json({ error: 'Not found' }, { status: 404 })
   }
-  if (game.round.tournament.adminToken !== adminToken) {
+  if (!isValidAdminToken(game.round.tournament.adminToken, adminToken)) {
     return Response.json({ error: 'Forbidden' }, { status: 403 })
   }
 

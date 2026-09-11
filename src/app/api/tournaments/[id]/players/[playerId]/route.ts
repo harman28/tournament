@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { isValidAdminToken } from '@/lib/auth'
 
 export async function PATCH(
   req: NextRequest,
@@ -10,7 +11,7 @@ export async function PATCH(
 
   const tournament = await prisma.tournament.findUnique({ where: { id } })
   if (!tournament) return Response.json({ error: 'Not found' }, { status: 404 })
-  if (tournament.adminToken !== adminToken)
+  if (!isValidAdminToken(tournament.adminToken, adminToken))
     return Response.json({ error: 'Forbidden' }, { status: 403 })
 
   const player = await prisma.player.findUnique({ where: { id: playerId } })

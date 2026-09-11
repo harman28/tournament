@@ -5,8 +5,9 @@
  * and organiser alike. The response includes all rounds, games, and a
  * pre-computed standings table (so clients do not need to calculate scores).
  *
- * The admin token is included in the response but is only meaningful to the
- * organiser; the public UI uses it to detect whether the current user is the admin.
+ * adminToken is deliberately stripped before the response is built: this route
+ * is public and unauthenticated, reachable with just the tournament ID, so the
+ * organiser's secret admin-page token must never round-trip through it.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -88,6 +89,7 @@ describe('When the tournament exists', () => {
     expect(response.status).toBe(200)
     expect(body.tournament.id).toBe('tid1')
     expect(Array.isArray(body.standings)).toBe(true)
+    expect(body.tournament.adminToken).toBeUndefined()
   })
 
   it('ranks the winner above the loser in the standings', async () => {

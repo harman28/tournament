@@ -34,5 +34,10 @@ export async function GET(
   const allGames = tournament.rounds.flatMap((r) => r.games)
   const standings = computeStandings(tournament.players, allGames)
 
-  return Response.json({ tournament, standings })
+  // adminToken must never leave this route — this endpoint is public and
+  // unauthenticated, reachable with just the tournament ID from the shareable link.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { adminToken: _adminToken, ...publicTournament } = tournament
+
+  return Response.json({ tournament: publicTournament, standings })
 }

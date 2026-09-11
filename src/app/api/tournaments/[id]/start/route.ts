@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { generateRound1Pairings, generateRoundRobinPairings, assignBoardNumbers } from '@/lib/swiss'
+import { isValidAdminToken } from '@/lib/auth'
 
 export async function POST(
   req: NextRequest,
@@ -15,7 +16,7 @@ export async function POST(
   })
 
   if (!tournament) return Response.json({ error: 'Not found' }, { status: 404 })
-  if (tournament.adminToken !== adminToken)
+  if (!isValidAdminToken(tournament.adminToken, adminToken))
     return Response.json({ error: 'Forbidden' }, { status: 403 })
   if (tournament.status !== 'setup')
     return Response.json({ error: 'Already started' }, { status: 400 })
