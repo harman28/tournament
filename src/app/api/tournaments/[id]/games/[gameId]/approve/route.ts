@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { isValidAdminToken } from '@/lib/auth'
 
 export async function POST(
   req: NextRequest,
@@ -16,7 +17,7 @@ export async function POST(
   if (!game || game.round.tournamentId !== id) {
     return Response.json({ error: 'Not found' }, { status: 404 })
   }
-  if (game.round.tournament.adminToken !== adminToken) {
+  if (!isValidAdminToken(game.round.tournament.adminToken, adminToken)) {
     return Response.json({ error: 'Forbidden' }, { status: 403 })
   }
   if (!game.pendingResult) {

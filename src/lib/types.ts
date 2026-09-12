@@ -35,7 +35,6 @@ export type StandingRow = {
 
 export type TournamentData = {
   id: string
-  adminToken: string
   name: string
   format: string
   numRounds: number

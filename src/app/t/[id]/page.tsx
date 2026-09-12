@@ -65,5 +65,10 @@ export default async function TournamentPage({
   const allGames = tournament.rounds.flatMap((r) => r.games)
   const standings = computeStandings(tournament.players, allGames)
 
-  return <TournamentView tournament={tournament} standings={standings} />
+  // adminToken must never reach the public page — everything passed to a client
+  // component is serialized into the page's payload, whether or not it's read.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { adminToken: _adminToken, ...publicTournament } = tournament
+
+  return <TournamentView tournament={publicTournament} standings={standings} />
 }

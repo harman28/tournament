@@ -32,7 +32,12 @@ export default async function AdminPage({
   const allGames = tournament.rounds.flatMap((r) => r.games)
   const standings = computeStandings(tournament.players, allGames)
 
+  // Already validated above; TournamentView gets the token via its own prop,
+  // not by reading it back off the tournament object.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { adminToken: _adminToken, ...publicTournament } = tournament
+
   return (
-    <TournamentView tournament={tournament} standings={standings} adminToken={token} />
+    <TournamentView tournament={publicTournament} standings={standings} adminToken={token} />
   )
 }
