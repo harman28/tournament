@@ -19,6 +19,11 @@ export async function POST(
     return Response.json({ error: 'Forbidden' }, { status: 403 })
   if (tournament.status !== 'setup')
     return Response.json({ error: 'Already started' }, { status: 400 })
+  // Creation no longer requires players up front - a tournament can be
+  // created empty and filled entirely via the invite link - so this can no
+  // longer be assumed true by the time Start is pressed.
+  if (tournament.players.length < 2)
+    return Response.json({ error: 'Need at least 2 players to start' }, { status: 400 })
 
   const isRR = tournament.format === 'rr' || tournament.format === 'drr'
   const pairings = isRR

@@ -106,6 +106,29 @@ describe('State guards', () => {
     expect(response.status).toBe(400)
     expect(body.error).toBe('Already started')
   })
+
+  // Players are no longer guaranteed at creation time (a tournament can be
+  // created empty and filled entirely via the invite link), so Start must
+  // enforce the real minimum itself instead of assuming it was already met.
+  it('returns 400 when fewer than 2 players have joined', async () => {
+    givenTournamentExists({ players: [{ id: 'Alice', seed: 1, rating: null, name: 'Alice' }] })
+
+    const response = await POST(startRequest(ADMIN_TOKEN), params(TOURNAMENT_ID))
+    const body     = await response.json()
+
+    expect(response.status).toBe(400)
+    expect(body.error).toBe('Need at least 2 players to start')
+    expect(vi.mocked(prisma.round.create)).not.toHaveBeenCalled()
+  })
+
+  it('returns 400 when no players have joined at all', async () => {
+    givenTournamentExists({ players: [] })
+
+    const response = await POST(startRequest(ADMIN_TOKEN), params(TOURNAMENT_ID))
+
+    expect(response.status).toBe(400)
+    expect(vi.mocked(prisma.round.create)).not.toHaveBeenCalled()
+  })
 })
 
 // ─── Successful start ─────────────────────────────────────────────────────────

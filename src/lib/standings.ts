@@ -99,6 +99,7 @@ export function buildPlayerStates(
   const scores: Record<string, number> = {}
   const colorBalance: Record<string, number> = {}
   const lastColor: Record<string, 'white' | 'black'> = {}
+  const colorStreak: Record<string, number> = {}
   const opponents: Record<string, Set<string>> = {}
   const hadBye: Record<string, boolean> = {}
 
@@ -125,6 +126,11 @@ export function buildPlayerStates(
     opponents[game.blackPlayerId]?.add(game.whitePlayerId)
     colorBalance[game.whitePlayerId] = (colorBalance[game.whitePlayerId] ?? 0) + 1
     colorBalance[game.blackPlayerId] = (colorBalance[game.blackPlayerId] ?? 0) - 1
+    // Streak = consecutive rounds ending in this same color, so assignColors
+    // can tell "just had white once" apart from "had white 3 times running"
+    // when breaking a colorBalance tie - see swiss.ts.
+    colorStreak[game.whitePlayerId] = lastColor[game.whitePlayerId] === 'white' ? (colorStreak[game.whitePlayerId] ?? 0) + 1 : 1
+    colorStreak[game.blackPlayerId] = lastColor[game.blackPlayerId] === 'black' ? (colorStreak[game.blackPlayerId] ?? 0) + 1 : 1
     lastColor[game.whitePlayerId] = 'white'
     lastColor[game.blackPlayerId] = 'black'
 
@@ -145,6 +151,7 @@ export function buildPlayerStates(
     score: scores[p.id] ?? 0,
     colorBalance: colorBalance[p.id] ?? 0,
     lastColor: lastColor[p.id] ?? null,
+    colorStreak: colorStreak[p.id] ?? 0,
     opponents: opponents[p.id] ?? new Set(),
     hadBye: hadBye[p.id] ?? false,
   }))

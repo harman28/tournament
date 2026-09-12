@@ -22,15 +22,21 @@ A chess tournament management app supporting Swiss and Round Robin formats. Play
 | `src/lib/standings.ts` | `computeStandings()` — scores, Buchholz, shared ranks; `buildPlayerStates()` for Swiss re-pairing |
 | `src/lib/types.ts` | Shared TypeScript types (`TournamentData`, `StandingRow`, etc.) |
 | `src/app/page.tsx` | Tournament creation form |
-| `src/app/t/[id]/page.tsx` | Public tournament view (server component) |
+| `src/app/t/[id]/page.tsx` | Public tournament view (server component); also `generateMetadata()` + `tournamentDescription()` for link-preview title/description |
+| `src/app/t/[id]/opengraph-image.tsx` | Dynamic per-tournament WhatsApp/iMessage/Slack link-preview image (`next/og`) |
 | `src/app/t/[id]/admin/[token]/page.tsx` | Admin view — validates token, redirects to public if wrong |
 | `src/components/TournamentView.tsx` | Main client component — tabs, pairings, results, standings, modals |
 | `src/app/api/tournaments/route.ts` | POST — create tournament |
 | `src/app/api/tournaments/[id]/route.ts` | GET — fetch tournament data |
 | `src/app/api/tournaments/[id]/start/route.ts` | POST — generate round 1, set status=active |
 | `src/app/api/tournaments/[id]/next-round/route.ts` | POST — complete current round, generate next (or finish tournament) |
+| `src/app/api/tournaments/[id]/undo-round/route.ts` | POST — admin deletes the latest round so it can be regenerated (e.g. after fixing an earlier result) |
 | `src/app/api/tournaments/[id]/games/[gameId]/result/route.ts` | POST (player → pending) / PATCH (admin → direct) |
 | `src/app/api/tournaments/[id]/games/[gameId]/approve/route.ts` | POST — admin approves or rejects a pending result |
+| `src/app/api/tournaments/[id]/players/route.ts` | POST — self-signup (no token, any format, only while "setup") or admin late-join (token required, Swiss only, only while "active") |
+| `src/app/api/tournaments/[id]/players/[playerId]/route.ts` | PATCH — set fixed board (admin). DELETE — admin removes a player, only while "setup" |
+| `src/app/admin/page.tsx` | Site-wide admin — every tournament across every user, read-only + delete. Gated by `SITE_ADMIN_PASSWORD` |
+| `src/lib/adminAuth.ts` | `checkAdminPassword()` shared by the site-admin login route and every gated site-admin route |
 
 ## Database
 
@@ -40,7 +46,14 @@ To apply schema changes: `npx prisma db push`
 
 ## Design
 
-Gold/black palette. All styles are inline (Tailwind custom colours were unreliable). Colour tokens are defined at the top of each file:
+Gold/black palette. All styles are inline (Tailwind custom colours were unreliable), **except**
+layout/positioning that needs a media query — inline `style` objects can't express those, so
+`.modal-overlay`/`.modal-sheet` (`src/app/globals.css`) handle the one case that needs it:
+result/add-player/join modals are a bottom sheet on mobile (thumb-reachable) but centered on
+`min-width: 640px` (desktop mouse users shouldn't have to travel the full screen height to
+reach a bottom sheet, especially when entering several results in a row). Colour/border/padding
+etc. on those modals stay inline as usual; only the alignment/border-radius/animation switch
+lives in the CSS class. Colour tokens are defined at the top of each file:
 
 - `BG #09080a` — page background  
 - `CARD #130f08` — card background  
@@ -51,11 +64,142 @@ Gold/black palette. All styles are inline (Tailwind custom colours were unreliab
 
 ## Known gotchas
 
+- **Invite-link self-signup**: players are no longer required at creation time
+  (`POST /api/tournaments` accepts an empty `players` array) — an organiser can create a
+  tournament with zero pre-listed players and just share the invite link (the same URL as the
+  public player link, `/t/[id]`). While a tournament is still `"setup"`, `POST
+  /api/tournaments/[id]/players` requires no admin token at all — same trust model as the
+  link itself — so both the admin and anyone with the link can add players, via
+  `AddPlayerRow` (admin, embedded as the last row of `RosterList`) or `JoinFields` (public,
+  under the "Join this tournament" heading) in `src/components/TournamentView.tsx` — same
+  endpoint, different placement since joining is the *primary* action for a visitor but a
+  secondary one for the organiser. This works for every format (swiss/rr/drr) since no
+  round-1 schedule exists yet to disturb.
+  Once `"active"`, the same POST route switches to admin-only + Swiss-only (see "Late joiners"
+  below) — self-signup is deliberately cut off the moment Start is pressed. Because players are
+  no longer guaranteed by creation-time validation, `/start` now enforces the real minimum
+  itself (`Need at least 2 players to start`) rather than assuming it was already met.
+  `DELETE /api/tournaments/[id]/players/[playerId]` (admin-only, `"setup"` only) lets the
+  organiser prune a duplicate/joke signup before starting — there's no safe "remove" story once
+  a round exists and may reference that player.
+- **Late joiners** (same `POST /api/tournaments/[id]/players` route, admin-only, Swiss + active
+  tournament only): no special catch-up scoring exists or is needed. A player with zero game
+  history is already indistinguishable, to `buildPlayerStates()`, from a player who's been
+  sitting at 0 the whole event — they just slot into `generatePairings()` normally from the
+  next round on. Not offered for `rr`/`drr` - Round Robin's schedule is fixed by player count
+  via the circle method at round 1, so a new player can't be spliced into an in-progress
+  rotation.
+  A late joiner gets the highest seed number, so they'd naturally sort to the very bottom of
+  their (likely 0-score) score group — `generatePairings`' bye-selection loop explicitly skips
+  anyone with zero games played (`opponents.size === 0`) when picking the bye recipient, as
+  long as a more experienced candidate is also eligible (hasn't already had a bye). Without
+  this, a newcomer would be quite likely to draw the very round they joined for as a bye
+  instead of an actual game - confirmed as a real, confusing case in testing, not just a
+  theoretical one. Only falls back to a never-played candidate if literally everyone eligible
+  is in that boat (e.g. several late joiners at once with an odd total).
+- **Color-streak fairness bug** (fixed): `assignColors`' colorBalance-tie fallback used to
+  default to whichever player sorts first (by score, then seed) whenever both tied players'
+  `lastColor` matched — in particular, two players who *each* independently won as white last
+  round (against different opponents) and then get paired against each other would always give
+  white to the higher-ranked one again, letting them collect white indefinitely on repeated
+  ties. Real report: a top player got white 3 rounds running this way. Fixed by tracking
+  `colorStreak` (consecutive rounds on the same color, computed in `buildPlayerStates`
+  alongside `lastColor`) and preferring whoever is more "due" for white — self-corrects within
+  one round even in the worst case, since whichever side extends its streak becomes *less* due
+  next time, handing white to the other side before a real 3-in-a-row can happen.
+- **Invite-link previews**: `/t/[id]`'s `generateMetadata()` (title/description) and
+  `opengraph-image.tsx` (the image) drive the WhatsApp/iMessage/Slack/etc link-preview card
+  when the invite link is shared - same URL as self-signup, so this is what most people
+  actually see first. The image is generated per-request via `next/og`'s `ImageResponse`
+  (Satori under the hood) reading the tournament's name/format/rounds/player count/status
+  straight from Postgres - deliberately **no emoji and no custom font file**, since those
+  need `ImageResponse`'s `emoji` option to fetch glyphs from an external CDN at render time,
+  and this renders on every single share; same "can't fail on a missing dependency" instinct
+  behind chess-library-api's pre-rendered piece PNGs. If the tournament id doesn't resolve
+  (bad/stale link), the image route doesn't throw - it falls back to a generic "Chess
+  Tournament" branded card rather than a broken image. Neither `generateMetadata` nor the
+  image route needs `metadataBase` set: Next.js resolves the image's absolute URL from the
+  incoming request's own origin, so it's correct on localhost, staging, and production
+  without a hardcoded domain anywhere. The admin URL (`/t/[id]/admin/[token]`) intentionally
+  has no special metadata - it's not meant to be shared, so it just inherits the generic
+  root-layout title/description.
+- **Undoing a round** (`POST /api/tournaments/[id]/undo-round`, admin-only): real feedback from
+  a live tournament ("Zwart op Wit") - a result got entered wrong in an earlier round, but
+  wasn't caught until the *next* round had already been generated (and partly played) from that
+  wrong data. Fixing a past result was already possible at any time - the admin `PATCH` on
+  `games/[gameId]/result` never checked round status or `game.result` before overwriting. What
+  was missing was the other half: discarding the round that got generated from the bad data, so
+  Next Round can regenerate it from the corrected standings. This route always deletes the
+  single *latest* round (never an arbitrary earlier one - anything after that round would still
+  be built on data that's about to change) and works regardless of whether that round is
+  untouched, partly played, or fully played - `Round`→`Game` cascades
+  (`schema.prisma`), so one `prisma.round.delete()` is enough. Reverts `Tournament.status` to
+  `"setup"` if that was the only round, otherwise `"active"` (covers reopening a `"complete"`
+  tournament by undoing its final round). Repeatable - calling it again peels back one more
+  round. The UI button (`TournamentView.tsx`, next to the round-advance button) is a plain
+  `window.confirm()` naming the round number and how many results would be discarded, not a
+  custom modal - this is a rare recovery action, not a frequent one.
 - **Prisma 7 adapter**: `PrismaClient` must receive a `PrismaPg` adapter; the old `datasource url` field in schema is gone.
 - **Standings self-reference bug** (fixed): `computeStandings` originally used `.map()` and referenced `standings[i-1]` inside the callback — TDZ error. Fixed with `reduce`.
+- **Fixed board pins are settable pre-start, not just from the Standings tab**: `BoardPin`
+  (used by `StandingsTable` once the tournament is running) is also embedded directly in
+  `RosterList`'s admin rows during `"setup"` (real feedback: a streamer's board pin only ever
+  took effect "from next round," which meant it could never apply to Round 1 itself, since
+  there was no UI to set it before Round 1 was generated). The backend
+  (`PATCH /api/tournaments/[id]/players/[playerId]`) never had a status restriction - this was
+  purely a missing pre-start affordance. `BoardPin` takes an `applyNote` prop (default `"from
+  next round"`, used by the Standings tab) so the setup-state copy can correctly say `"from
+  Round 1"` instead - there's no "current round" yet pre-start, so the original wording would
+  have been misleading there.
 - **Bye ordering**: byes must be appended *last* in all pairing functions so they appear at the bottom of the pairings table without a board number.
 - **Games ordering**: Prisma queries on games use `orderBy: { id: 'asc' }` to prevent reordering when results are entered.
 - **scoreStr half-point**: `0.5` renders as `½`, not `0½`.
+
+## Site admin
+
+`/admin` is a separate thing from a tournament's own admin link
+(`/t/[id]/admin/[token]`) - it's a single, site-wide, password-gated view (`SITE_ADMIN_PASSWORD`
+env var) listing **every** tournament ever created, across every user, with a delete button per
+tournament. Built after Harman noticed strangers ("Eclipse Chess") had started self-registering
+via the invite-link feature and wanted a way to check who's using the site without shelling into
+Postgres by hand each time - see git history around 2026-08-12 for the full story, including a
+DB-delete-via-hand-quoted-psql attempt that was correctly called out as risky before this page
+existed as the safer alternative.
+
+- **Auth**: `checkAdminPassword()` (`src/lib/adminAuth.ts`) does a direct string comparison
+  against `SITE_ADMIN_PASSWORD` - same trust model this app already uses for a tournament's own
+  `adminToken` (no hashing), just applied once, site-wide, instead of per-tournament. On success
+  `POST /api/admin/login` sets an `HttpOnly`/`Secure`/`SameSite=Lax` cookie (`site_admin_pw`,
+  `src/lib/adminAuth.ts`'s `ADMIN_COOKIE_NAME`) whose *value* is the password itself - every
+  gated route re-checks that cookie value with the same `checkAdminPassword()` function, so
+  there's exactly one place the comparison logic lives. If `SITE_ADMIN_PASSWORD` is unset,
+  `checkAdminPassword` always returns `false` - admin is disabled, not "open with no password."
+- **Data flow**: `src/app/admin/page.tsx` is a server component - it checks the cookie itself
+  and, if valid, queries every tournament (with players and a `_count` of generated rounds)
+  directly via Prisma and passes it to `AdminDashboard` (`src/components/AdminDashboard.tsx`) as
+  props. This mirrors `/t/[id]`'s own pattern (server-fetch → client component for
+  interactivity) rather than having the client component do its own `fetch` on mount - there's
+  deliberately no `GET /api/admin/tournaments` route, since nothing needs it: the initial load is
+  the server component's own query, and post-delete refresh is a plain `router.refresh()` (same
+  as every mutation elsewhere in this app), not a client-side re-fetch.
+- **Delete** (`DELETE /api/admin/tournaments/[id]`): unlike the per-tournament
+  `DELETE /api/tournaments/[id]/players/[playerId]` (admin-only, `"setup"`-only, see above), this
+  deletes a tournament **regardless of status** - active and complete tournaments too. Safe to do
+  unconditionally because `Player.tournamentId` and `Round.tournamentId` both cascade
+  (`onDelete: Cascade` in `schema.prisma`), and `Game.roundId` also cascades, so
+  `prisma.tournament.delete()` alone removes every dependent row in one statement - no manual
+  cleanup ordering needed. Gated behind a native `window.confirm()` in `AdminDashboard` that
+  names the tournament and its player count before deleting, since there's no undo.
+- **Not** the same page as a tournament's own admin link - that one stays a per-tournament
+  secret URL (`adminToken`) with no password, unrelated to `SITE_ADMIN_PASSWORD`.
+- **Player/admin links** (`AdminDashboard`'s expanded row): `t.adminToken` reaches the client
+  fine with no extra work - `prisma.tournament.findMany()` in `page.tsx` has no `select`, so
+  every scalar field (including `adminToken`) is already on the object, it just wasn't in the
+  `AdminTournament` type until this was added. `LinkButton` opens the actual page via a
+  *relative* `href` (`/t/[id]`, `/t/[id]/admin/[adminToken]`) - correct no matter which domain
+  `/admin` itself happens to be viewed from - and separately builds an absolute URL for the
+  clipboard using `window.location.origin`, read only inside the click handler so it stays
+  SSR-safe (never touched during render, where `window` doesn't exist yet).
 
 ## Formats
 

@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import type { TournamentData, TournamentGame, TournamentPlayer, StandingRow } from '@/lib/types'
+import { formatLabel as getFormatLabel } from '@/lib/swiss'
 
 const BG     = '#09080a'
 const CARD   = '#130f08'
@@ -34,6 +35,8 @@ export default function TournamentView({ tournament, standings, adminToken }: Pr
   const [resultsRound, setResultsRound] = useState(1)
   // Optimistic results: applied immediately, cleared on server refresh
   const [optimistic, setOptimistic] = useState<Record<string, string>>({})
+  const [addPlayerOpen, setAddPlayerOpen] = useState(false)
+  const [joinedPlayer, setJoinedPlayer] = useState<{ id: string; name: string } | null>(null)
 
   const currentRound = tournament.rounds[tournament.rounds.length - 1]
   const roundsComplete = tournament.rounds.filter((r) => r.status === 'complete').length
@@ -54,6 +57,18 @@ export default function TournamentView({ tournament, standings, adminToken }: Pr
   useEffect(() => {
     if (currentRound) setResultsRound(currentRound.number)
   }, [currentRound?.number])
+
+  // Remembers who this browser joined as, so a refresh (or the 30s auto-poll)
+  // doesn't re-show the join form to someone who already signed up.
+  useEffect(() => {
+    if (isAdmin) return
+    const raw = localStorage.getItem(`joined:${tournament.id}`)
+    if (!raw) return
+    try {
+      const saved = JSON.parse(raw) as { id: string; name: string }
+      if (tournament.players.some((p) => p.id === saved.id)) setJoinedPlayer(saved)
+    } catch { /* ignore malformed localStorage */ }
+  }, [isAdmin, tournament.id, tournament.players])
 
   const copyLink = useCallback(async () => {
     await navigator.clipboard.writeText(`${window.location.origin}/t/${tournament.id}`)
@@ -78,6 +93,23 @@ export default function TournamentView({ tournament, standings, adminToken }: Pr
   async function nextRound() {
     setActionLoading(true)
     await fetch(`/api/tournaments/${tournament.id}/next-round`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ adminToken }),
+    })
+    router.refresh()
+    setActionLoading(false)
+  }
+
+  async function undoLastRound() {
+    if (!currentRound) return
+    const entered = currentRound.games.filter((g) => g.result).length
+    const warning = entered > 0
+      ? ` ${entered} result${entered === 1 ? '' : 's'} already entered in it will be lost too.`
+      : ''
+    if (!window.confirm(`Undo Round ${currentRound.number}? This deletes its pairings.${warning} Fix a result in an earlier round, then generate pairings again.`))
+      return
+    setActionLoading(true)
+    await fetch(`/api/tournaments/${tournament.id}/undo-round`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ adminToken }),
     })
@@ -116,13 +148,52 @@ export default function TournamentView({ tournament, standings, adminToken }: Pr
     router.refresh()
   }
 
+  async function addPlayer(name: string, rating: number | null): Promise<string | null> {
+    const res = await fetch(`/api/tournaments/${tournament.id}/players`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ adminToken, name, rating }),
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      return body.error ?? 'Something went wrong'
+    }
+    setAddPlayerOpen(false)
+    router.refresh()
+    return null
+  }
+
+  // Public, unauthenticated self-signup - same endpoint as addPlayer above,
+  // just without an admin token. The route allows this while status is
+  // "setup" (see players/route.ts).
+  async function joinTournament(name: string, rating: number | null): Promise<string | null> {
+    const res = await fetch(`/api/tournaments/${tournament.id}/players`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, rating }),
+    })
+    const body = await res.json().catch(() => ({}))
+    if (!res.ok) return body.error ?? 'Something went wrong'
+    const player = { id: body.player.id as string, name: body.player.name as string }
+    localStorage.setItem(`joined:${tournament.id}`, JSON.stringify(player))
+    setJoinedPlayer(player)
+    router.refresh()
+    return null
+  }
+
+  async function removePlayer(playerId: string) {
+    await fetch(`/api/tournaments/${tournament.id}/players/${playerId}`, {
+      method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ adminToken }),
+    })
+    router.refresh()
+  }
+
   // Merge optimistic results into game data
   function mergeOptimistic(games: TournamentGame[]): TournamentGame[] {
     return games.map((g) => optimistic[g.id] ? { ...g, result: optimistic[g.id] } : g)
   }
 
   const resultsRoundData = tournament.rounds.find((r) => r.number === resultsRound)
-  const formatLabel = tournament.format === 'rr' ? 'Round Robin' : tournament.format === 'drr' ? 'Double Round Robin' : 'Swiss'
+  const formatLabel = getFormatLabel(tournament.format)
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: BG, display: 'flex', flexDirection: 'column' }}>
@@ -194,11 +265,20 @@ export default function TournamentView({ tournament, standings, adminToken }: Pr
                 <span style={{ fontSize: 26, fontWeight: 900, color: TEXT, letterSpacing: '-0.5px' }}>Round {currentRound.number}</span>
                 <span style={{ fontSize: 18, fontWeight: 400, color: MUTED }}> / {tournament.numRounds}</span>
               </div>
-              {isAdmin && tournament.status === 'active' && currentRoundComplete && (
-                <button onClick={nextRound} disabled={actionLoading}
-                  style={{ backgroundColor: ACCENT, color: BG, fontWeight: 800, border: 'none', borderRadius: 10, padding: '10px 18px', fontSize: 14, cursor: actionLoading ? 'not-allowed' : 'pointer', opacity: actionLoading ? 0.6 : 1 }}>
-                  {actionLoading ? '…' : allDone ? '🏆 Complete' : `Round ${currentRound.number + 1} →`}
-                </button>
+              {isAdmin && (tournament.status === 'active' || tournament.status === 'complete') && (
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button onClick={undoLastRound} disabled={actionLoading}
+                    title={`Undo Round ${currentRound.number} - e.g. to fix a result entered wrong in an earlier round`}
+                    style={{ backgroundColor: 'transparent', border: `1px solid ${BORDER}`, color: MUTED, fontWeight: 700, borderRadius: 10, padding: '10px 14px', fontSize: 13, cursor: actionLoading ? 'not-allowed' : 'pointer', opacity: actionLoading ? 0.6 : 1 }}>
+                    ↺ Undo Round {currentRound.number}
+                  </button>
+                  {tournament.status === 'active' && currentRoundComplete && (
+                    <button onClick={nextRound} disabled={actionLoading}
+                      style={{ backgroundColor: ACCENT, color: BG, fontWeight: 800, border: 'none', borderRadius: 10, padding: '10px 18px', fontSize: 14, cursor: actionLoading ? 'not-allowed' : 'pointer', opacity: actionLoading ? 0.6 : 1 }}>
+                      {actionLoading ? '…' : allDone ? '🏆 Complete' : `Round ${currentRound.number + 1} →`}
+                    </button>
+                  )}
+                </div>
               )}
             </div>
             <div style={{ display: 'flex', gap: 4 }}>
@@ -216,71 +296,78 @@ export default function TournamentView({ tournament, standings, adminToken }: Pr
       {/* ── Setup state ────────────────────────────────────────────── */}
       {tournament.status === 'setup' && (
         <div style={{ flex: 1, padding: '32px 16px' }}>
-          <div style={{ maxWidth: 480, margin: '0 auto' }} className="fade-up">
-            {isAdmin ? (
-              <>
-                <div style={{ textAlign: 'center', marginBottom: 28 }}>
-                  <div style={{ fontSize: 44, marginBottom: 12 }}>🏁</div>
-                  <h2 style={{ fontSize: 22, fontWeight: 800, color: TEXT, margin: '0 0 8px' }}>Ready to start</h2>
-                  <p style={{ color: MUTED, lineHeight: 1.6 }}>{tournament.players.length} players · {tournament.numRounds} rounds · {formatLabel}</p>
-                </div>
+          <div className="setup-container fade-up" style={{ margin: '0 auto' }}>
+            <div className="setup-grid">
+              {isAdmin ? (
+                <>
+                  <div>
+                    <div style={{ textAlign: 'center', marginBottom: 28 }}>
+                      <div style={{ fontSize: 44, marginBottom: 12 }}>🏁</div>
+                      <h2 style={{ fontSize: 22, fontWeight: 800, color: TEXT, margin: '0 0 8px' }}>Ready to start</h2>
+                      <p style={{ color: MUTED, lineHeight: 1.6 }}>{tournament.players.length} players · {tournament.numRounds} rounds · {formatLabel}</p>
+                    </div>
 
-                {/* Two links explanation */}
-                <div style={{ backgroundColor: CARD, border: `1px solid ${BORDER}`, borderRadius: 14, padding: '18px', marginBottom: 20 }}>
-                  <p style={{ fontSize: 13, fontWeight: 700, color: TEXT, marginBottom: 14 }}>Two links, two roles</p>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                    <div style={{ display: 'flex', gap: 12 }}>
-                      <span style={{ fontSize: 22 }}>🔗</span>
-                      <div>
-                        <p style={{ fontSize: 13, fontWeight: 700, color: ACCENT, margin: '0 0 3px' }}>Player link</p>
-                        <p style={{ fontSize: 12, color: MUTED, margin: 0 }}>Share with all players. They can view pairings, standings, and submit results for your approval.</p>
+                    {/* Two links explanation */}
+                    <div style={{ backgroundColor: CARD, border: `1px solid ${BORDER}`, borderRadius: 14, padding: '18px', marginBottom: 20 }}>
+                      <p style={{ fontSize: 13, fontWeight: 700, color: TEXT, marginBottom: 14 }}>Two links, two roles</p>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                        <div style={{ display: 'flex', gap: 12 }}>
+                          <span style={{ fontSize: 22 }}>🔗</span>
+                          <div>
+                            <p style={{ fontSize: 13, fontWeight: 700, color: ACCENT, margin: '0 0 3px' }}>Invite link</p>
+                            <p style={{ fontSize: 12, color: MUTED, margin: 0 }}>Share with all players. They can register for the tournament, view pairings, standings, and submit results for your approval.</p>
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: 12 }}>
+                          <span style={{ fontSize: 22 }}>🔐</span>
+                          <div>
+                            <p style={{ fontSize: 13, fontWeight: 700, color: AMBER, margin: '0 0 3px' }}>Admin link (this page)</p>
+                            <p style={{ fontSize: 12, color: MUTED, margin: 0 }}>Keep private. Approve results, enter results directly, and advance rounds.</p>
+                          </div>
+                        </div>
                       </div>
                     </div>
-                    <div style={{ display: 'flex', gap: 12 }}>
-                      <span style={{ fontSize: 22 }}>🔐</span>
-                      <div>
-                        <p style={{ fontSize: 13, fontWeight: 700, color: AMBER, margin: '0 0 3px' }}>Admin link (this page)</p>
-                        <p style={{ fontSize: 12, color: MUTED, margin: 0 }}>Keep private. Approve results, enter results directly, and advance rounds.</p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
 
-                <button onClick={startTournament} disabled={actionLoading}
-                  style={{ width: '100%', backgroundColor: ACCENT, color: BG, fontWeight: 800, border: 'none', borderRadius: 14, padding: '16px', fontSize: 16, cursor: actionLoading ? 'not-allowed' : 'pointer', opacity: actionLoading ? 0.6 : 1, marginBottom: 10 }}>
-                  {actionLoading ? 'Starting…' : 'Start Tournament →'}
-                </button>
-                <button onClick={copyLink}
-                  style={{ width: '100%', backgroundColor: 'transparent', border: `1px solid ${BORDER}`, color: MUTED, borderRadius: 14, padding: '13px', fontSize: 14, cursor: 'pointer' }}>
-                  {copied ? '✓ Player link copied!' : 'Copy player link'}
-                </button>
-              </>
-            ) : (
-              <>
-                <div style={{ textAlign: 'center', marginBottom: 28 }}>
-                  <div style={{ fontSize: 44, marginBottom: 12 }}>⏳</div>
-                  <h2 style={{ fontSize: 22, fontWeight: 800, color: TEXT, margin: '0 0 8px' }}>Waiting for the organiser to start…</h2>
-                  <p style={{ color: MUTED, lineHeight: 1.6 }}>{tournament.players.length} players · {tournament.numRounds} rounds · {formatLabel}</p>
-                </div>
-                {/* Show player list */}
-                <div style={{ backgroundColor: CARD, border: `1px solid ${BORDER}`, borderRadius: 14, overflow: 'hidden' }}>
-                  <div style={{ padding: '12px 16px', borderBottom: `1px solid ${BORDER}` }}>
-                    <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: MUTED }}>
-                      {tournament.players.length} Players registered
-                    </span>
+                    <button onClick={startTournament} disabled={actionLoading}
+                      style={{ width: '100%', backgroundColor: ACCENT, color: BG, fontWeight: 800, border: 'none', borderRadius: 14, padding: '16px', fontSize: 16, cursor: actionLoading ? 'not-allowed' : 'pointer', opacity: actionLoading ? 0.6 : 1, marginBottom: 10 }}>
+                      {actionLoading ? 'Starting…' : 'Start Tournament →'}
+                    </button>
+                    <button onClick={copyLink}
+                      style={{ width: '100%', backgroundColor: 'transparent', border: `1px solid ${BORDER}`, color: MUTED, borderRadius: 14, padding: '13px', fontSize: 14, cursor: 'pointer' }}>
+                      {copied ? '✓ Invite link copied!' : 'Copy invite link'}
+                    </button>
                   </div>
-                  {tournament.players.map((p, i) => (
-                    <div key={p.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderTop: i === 0 ? 'none' : `1px solid ${BORDER}`, backgroundColor: ROW }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                        <span style={{ fontSize: 12, color: DIM, fontFamily: 'monospace', minWidth: 20 }}>{i + 1}</span>
-                        <span style={{ fontSize: 15, fontWeight: 600, color: TEXT }}>{p.name}</span>
-                      </div>
-                      {p.rating && <span style={{ fontSize: 13, color: MUTED }}>{p.rating}</span>}
+
+                  <RosterList players={tournament.players} isAdmin onRemove={removePlayer} onAdd={addPlayer} addPlaceholder="Player name" onSetFixedBoard={setFixedBoard} />
+                </>
+              ) : (
+                <>
+                  <div>
+                    <div style={{ textAlign: 'center', marginBottom: 28 }}>
+                      <div style={{ fontSize: 44, marginBottom: 12 }}>⏳</div>
+                      <h2 style={{ fontSize: 22, fontWeight: 800, color: TEXT, margin: '0 0 8px' }}>
+                        {joinedPlayer ? "You're in!" : 'Join this tournament'}
+                      </h2>
+                      <p style={{ color: MUTED, lineHeight: 1.6 }}>{tournament.players.length} players · {tournament.numRounds} rounds · {formatLabel}</p>
                     </div>
-                  ))}
-                </div>
-              </>
-            )}
+
+                    {joinedPlayer && (
+                      <div style={{ backgroundColor: `${ACCENT}0f`, border: `1px solid ${ACCENT}55`, borderRadius: 14, padding: '16px 18px', marginBottom: 20 }}>
+                        <span style={{ fontSize: 14, color: TEXT }}>Signed up as <strong style={{ color: ACCENT }}>{joinedPlayer.name}</strong>. Sit tight for the organiser to start.</span>
+                      </div>
+                    )}
+
+                    <JoinFields
+                      existingNames={tournament.players.map((p) => p.name)}
+                      onSubmit={joinTournament}
+                      submitLabel={joinedPlayer ? 'Add another player' : 'Join tournament'}
+                    />
+                  </div>
+
+                  <RosterList players={tournament.players} isAdmin={false} />
+                </>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -319,7 +406,17 @@ export default function TournamentView({ tournament, standings, adminToken }: Pr
                 </div>
               )}
               {tab === 'standings' && (
-                <StandingsTable standings={standings} tournament={tournament} isAdmin={isAdmin} onSetFixedBoard={setFixedBoard} />
+                <div>
+                  {isAdmin && tournament.format === 'swiss' && tournament.status === 'active' && (
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+                      <button onClick={() => setAddPlayerOpen(true)}
+                        style={{ fontSize: 13, fontWeight: 700, border: `1px solid ${BORDER}`, borderRadius: 9, padding: '8px 14px', backgroundColor: 'transparent', color: ACCENT, cursor: 'pointer' }}>
+                        + Add late player
+                      </button>
+                    </div>
+                  )}
+                  <StandingsTable standings={standings} tournament={tournament} isAdmin={isAdmin} onSetFixedBoard={setFixedBoard} />
+                </div>
               )}
             </div>
           </div>
@@ -333,6 +430,15 @@ export default function TournamentView({ tournament, standings, adminToken }: Pr
           isAdmin={isAdmin}
           onClose={() => setModal(null)}
           onSubmit={(result, name) => submitResult(modal.id, result, name)}
+        />
+      )}
+
+      {/* ── Add late player modal ─────────────────────────────────── */}
+      {addPlayerOpen && (
+        <AddPlayerModal
+          nextRoundNumber={(currentRound?.number ?? 1) + 1}
+          onClose={() => setAddPlayerOpen(false)}
+          onSubmit={addPlayer}
         />
       )}
     </div>
@@ -475,7 +581,7 @@ function PinIcon({ filled }: { filled: boolean }) {
   )
 }
 
-function BoardPin({ player, onSet }: { player: TournamentPlayer; onSet: (v: number | null) => void }) {
+function BoardPin({ player, onSet, applyNote = 'from next round' }: { player: TournamentPlayer; onSet: (v: number | null) => void; applyNote?: string }) {
   const [editing, setEditing] = useState(false)
   const [val, setVal] = useState(player.fixedBoard != null ? String(player.fixedBoard) : '')
 
@@ -492,17 +598,19 @@ function BoardPin({ player, onSet }: { player: TournamentPlayer; onSet: (v: numb
           style={{ width: 44, backgroundColor: BG, border: `1px solid ${ACCENT}`, borderRadius: 6, padding: '3px 4px', color: TEXT, fontSize: 12, textAlign: 'center', outline: 'none' }}
           onKeyDown={(e) => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false) }}
           onBlur={commit} />
-        {/* A pin never affects the round already in progress - only calls this
+        {/* A pin never affects a round already generated - only calls this
             out here, at the moment it's set, so it doesn't read as "nothing
-            happened" when the current round's pairings don't change. */}
-        <span style={{ fontSize: 9, color: MUTED, whiteSpace: 'nowrap', lineHeight: 1 }}>from next round</span>
+            happened" when an already-generated round's pairings don't change.
+            Pre-start (RosterList) there's no round yet, so the wording is
+            different - "from Round 1" rather than "from next round". */}
+        <span style={{ fontSize: 9, color: MUTED, whiteSpace: 'nowrap', lineHeight: 1 }}>{applyNote}</span>
       </div>
     )
   }
 
   return (
     <button type="button" onClick={() => setEditing(true)}
-      title={player.fixedBoard ? `Fixed to board ${player.fixedBoard} - applies from next round` : "Fix this player's board number"}
+      title={player.fixedBoard ? `Fixed to board ${player.fixedBoard} - applies ${applyNote}` : "Fix this player's board number"}
       style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: 'none', border: 'none', color: player.fixedBoard ? ACCENT : MUTED, fontSize: 12, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer', padding: 0, opacity: player.fixedBoard ? 1 : 0.5 }}>
       <PinIcon filled={!!player.fixedBoard} />
       {player.fixedBoard ?? ''}
@@ -532,10 +640,9 @@ function ResultModal({ game, isAdmin, onClose, onSubmit }: { game: TournamentGam
   }
 
   return (
-    <div onClick={onClose}
-      style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 50 }}>
-      <div onClick={(e) => e.stopPropagation()} className="slide-up"
-        style={{ backgroundColor: CARD, border: `1px solid ${BORDER}`, borderTop: `1px solid ${DIM}`, borderRadius: '20px 20px 0 0', width: '100%', maxWidth: 480, padding: '8px 20px 40px', boxShadow: '0 -20px 60px rgba(0,0,0,0.6)' }}>
+    <div onClick={onClose} className="modal-overlay">
+      <div onClick={(e) => e.stopPropagation()} className="modal-sheet slide-up"
+        style={{ backgroundColor: CARD, border: `1px solid ${BORDER}`, borderTop: `1px solid ${DIM}`, padding: '8px 20px 40px', boxShadow: '0 -20px 60px rgba(0,0,0,0.6)' }}>
 
         <div style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: BORDER, margin: '12px auto 20px' }} />
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
@@ -572,6 +679,238 @@ function ResultModal({ game, isAdmin, onClose, onSubmit }: { game: TournamentGam
         </div>
       </div>
     </div>
+  )
+}
+
+// ─── Add late player modal ──────────────────────────────────────────────────
+
+// For a Swiss tournament, a player who shows up after round 1 or 2 doesn't
+// need any special catch-up handling - buildPlayerStates() in lib/standings.ts
+// already treats a player with no game history as a normal 0-score entrant
+// with no opponents/color history, which is exactly what a fresh late joiner
+// is. They just won't appear in the current round's pairings (already fixed)
+// and get slotted in like everyone else starting next round.
+function AddPlayerModal({ nextRoundNumber, onClose, onSubmit }: { nextRoundNumber: number; onClose: () => void; onSubmit: (name: string, rating: number | null) => Promise<string | null> }) {
+  const [name, setName] = useState('')
+  const [rating, setRating] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+  const nameRef = useRef<HTMLInputElement>(null)
+
+  async function submit() {
+    if (!name.trim()) {
+      setError('Name is required')
+      nameRef.current?.focus()
+      return
+    }
+    setSubmitting(true)
+    setError(null)
+    const ratingNum = rating.trim() ? Number(rating.trim()) : null
+    const err = await onSubmit(name.trim(), ratingNum != null && !Number.isNaN(ratingNum) ? ratingNum : null)
+    setSubmitting(false)
+    if (err) setError(err)
+  }
+
+  return (
+    <div onClick={onClose} className="modal-overlay">
+      <div onClick={(e) => e.stopPropagation()} className="modal-sheet slide-up"
+        style={{ backgroundColor: CARD, border: `1px solid ${BORDER}`, borderTop: `1px solid ${DIM}`, padding: '8px 20px 40px', boxShadow: '0 -20px 60px rgba(0,0,0,0.6)' }}>
+
+        <div style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: BORDER, margin: '12px auto 20px' }} />
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+          <h2 style={{ fontSize: 18, fontWeight: 800, color: TEXT, margin: 0 }}>Add late player</h2>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: MUTED, fontSize: 26, cursor: 'pointer', lineHeight: 1, padding: 0 }}>×</button>
+        </div>
+        <p style={{ color: MUTED, fontSize: 14, marginBottom: 20 }}>
+          Joins with 0 points and no prior games. They&apos;ll appear in pairings starting Round {nextRoundNumber}.
+        </p>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: error ? 8 : 0 }}>
+          <input ref={nameRef} type="text" placeholder="Player name *" value={name} onChange={(e) => setName(e.target.value)}
+            style={{ width: '100%', backgroundColor: BG, border: `1.5px solid ${BORDER}`, borderRadius: 12, padding: '13px 16px', color: TEXT, fontSize: 15, outline: 'none' }}
+            onKeyDown={(e) => { if (e.key === 'Enter') submit() }}
+            onFocus={(e) => (e.target.style.borderColor = ACCENT)}
+            onBlur={(e) => (e.target.style.borderColor = BORDER)} />
+          <input type="number" placeholder="Rating (optional)" value={rating} onChange={(e) => setRating(e.target.value)}
+            style={{ width: '100%', backgroundColor: BG, border: `1.5px solid ${BORDER}`, borderRadius: 12, padding: '13px 16px', color: TEXT, fontSize: 15, outline: 'none' }}
+            onKeyDown={(e) => { if (e.key === 'Enter') submit() }}
+            onFocus={(e) => (e.target.style.borderColor = ACCENT)}
+            onBlur={(e) => (e.target.style.borderColor = BORDER)} />
+        </div>
+
+        {error && <p style={{ color: '#ef4444', fontSize: 13, margin: '0 0 12px' }}>{error}</p>}
+
+        <button onClick={submit} disabled={submitting}
+          style={{ width: '100%', backgroundColor: ACCENT, color: BG, fontWeight: 800, border: 'none', borderRadius: 14, padding: '15px', fontSize: 15, cursor: submitting ? 'not-allowed' : 'pointer', opacity: submitting ? 0.6 : 1, marginTop: 16 }}>
+          {submitting ? 'Adding…' : 'Add player'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ─── Roster list (setup state) ───────────────────────────────────────────────
+
+function RosterList({
+  players, isAdmin, onRemove, onAdd, addPlaceholder = 'Player name', onSetFixedBoard,
+}: {
+  players: TournamentPlayer[]
+  isAdmin: boolean
+  onRemove?: (id: string) => void
+  onAdd?: (name: string, rating: number | null) => Promise<string | null>
+  addPlaceholder?: string
+  onSetFixedBoard?: (playerId: string, fixedBoard: number | null) => void
+}) {
+  return (
+    <div style={{ backgroundColor: CARD, border: `1px solid ${BORDER}`, borderRadius: 14, overflow: 'hidden' }}>
+      <div style={{ padding: '12px 16px', borderBottom: `1px solid ${BORDER}` }}>
+        <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: MUTED }}>
+          {players.length} player{players.length === 1 ? '' : 's'} registered
+        </span>
+      </div>
+      {players.length === 0 && !onAdd && (
+        <div style={{ padding: '16px', backgroundColor: ROW, textAlign: 'center', color: MUTED, fontSize: 13 }}>
+          No one yet - share the invite link to get started.
+        </div>
+      )}
+      {players.map((p, i) => (
+        <div key={p.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderTop: i === 0 ? 'none' : `1px solid ${BORDER}`, backgroundColor: ROW }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ fontSize: 12, color: DIM, fontFamily: 'monospace', minWidth: 20 }}>{i + 1}</span>
+            <span style={{ fontSize: 15, fontWeight: 600, color: TEXT }}>{p.name}</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            {p.rating && <span style={{ fontSize: 13, color: MUTED }}>{p.rating}</span>}
+            {isAdmin && onSetFixedBoard && (
+              <BoardPin player={p} onSet={(v) => onSetFixedBoard(p.id, v)} applyNote="from Round 1" />
+            )}
+            {isAdmin && onRemove && (
+              <button type="button" onClick={() => onRemove(p.id)} title={`Remove ${p.name}`}
+                style={{ background: 'none', border: 'none', color: MUTED, fontSize: 18, cursor: 'pointer', lineHeight: 1, padding: 0 }}>×</button>
+            )}
+          </div>
+        </div>
+      ))}
+      {onAdd && (
+        <AddPlayerRow onAdd={onAdd} placeholder={addPlaceholder} existingNames={players.map((p) => p.name)} isFirst={players.length === 0} />
+      )}
+    </div>
+  )
+}
+
+// The "add" affordance lives as the last row of the roster itself, rather
+// than a separate form above/below the list - one continuous list of
+// players with the option to add more right at the end of it.
+function AddPlayerRow({ onAdd, placeholder, existingNames, isFirst }: { onAdd: (name: string, rating: number | null) => Promise<string | null>; placeholder: string; existingNames: string[]; isFirst: boolean }) {
+  const [open, setOpen] = useState(false)
+  const [name, setName] = useState('')
+  const [rating, setRating] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+
+  const lowerExisting = existingNames.map((n) => n.trim().toLowerCase())
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault()
+    const trimmed = name.trim()
+    if (!trimmed) { setError('Enter a name'); return }
+    if (lowerExisting.includes(trimmed.toLowerCase())) { setError("That name's already taken - try adding a last initial"); return }
+    setSubmitting(true)
+    setError(null)
+    const ratingNum = rating.trim() ? Number(rating.trim()) : null
+    const err = await onAdd(trimmed, ratingNum != null && !Number.isNaN(ratingNum) ? ratingNum : null)
+    setSubmitting(false)
+    if (err) { setError(err); return }
+    setName('')
+    setRating('')
+    setOpen(false)
+  }
+
+  if (!open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)}
+        style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '12px 16px', borderTop: isFirst ? 'none' : `1px solid ${BORDER}`, backgroundColor: 'transparent', border: 'none', borderTopWidth: isFirst ? 0 : 1, borderTopStyle: 'solid', borderTopColor: BORDER, color: ACCENT, fontSize: 14, fontWeight: 700, cursor: 'pointer', textAlign: 'left' }}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 20, height: 20, borderRadius: 6, border: `1.5px dashed ${ACCENT}`, fontSize: 14, fontWeight: 400 }}>+</span>
+        Add player
+      </button>
+    )
+  }
+
+  return (
+    <form onSubmit={submit} style={{ padding: '12px 16px', borderTop: isFirst ? 'none' : `1px solid ${BORDER}` }}>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <input type="text" placeholder={placeholder} value={name} onChange={(e) => setName(e.target.value)} autoFocus
+          style={{ flex: 1, minWidth: 0, backgroundColor: BG, border: `1.5px solid ${error ? '#ef4444' : BORDER}`, borderRadius: 10, padding: '10px 12px', color: TEXT, fontSize: 14, outline: 'none' }}
+          onFocus={(e) => (e.target.style.borderColor = ACCENT)}
+          onBlur={(e) => (e.target.style.borderColor = error ? '#ef4444' : BORDER)} />
+        <input type="number" placeholder="Rtg" value={rating} onChange={(e) => setRating(e.target.value)}
+          style={{ width: 60, backgroundColor: BG, border: `1.5px solid ${BORDER}`, borderRadius: 10, padding: '10px 12px', color: TEXT, fontSize: 14, outline: 'none' }}
+          onFocus={(e) => (e.target.style.borderColor = ACCENT)}
+          onBlur={(e) => (e.target.style.borderColor = BORDER)} />
+      </div>
+      {error && <p style={{ color: '#ef4444', fontSize: 12, margin: '6px 0 0' }}>{error}</p>}
+      <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+        <button type="submit" disabled={submitting}
+          style={{ flex: 1, backgroundColor: ACCENT, color: BG, fontWeight: 800, border: 'none', borderRadius: 9, padding: '10px', fontSize: 14, cursor: submitting ? 'not-allowed' : 'pointer', opacity: submitting ? 0.6 : 1 }}>
+          {submitting ? 'Adding…' : 'Add'}
+        </button>
+        <button type="button" onClick={() => { setOpen(false); setError(null) }}
+          style={{ backgroundColor: 'transparent', border: `1px solid ${BORDER}`, color: MUTED, borderRadius: 9, padding: '10px 14px', fontSize: 14, cursor: 'pointer' }}>
+          Cancel
+        </button>
+      </div>
+    </form>
+  )
+}
+
+// ─── Registration fields (public setup state) ────────────────────────────────
+
+// Unlike the admin's roster-embedded AddPlayerRow (a collapsed affordance at
+// the end of a list of things the admin might not need to touch), this is
+// the single primary action a visitor to the invite link has - so it's
+// always open, sitting right under the "Join this tournament" heading
+// rather than folded into the roster on the other side of the page.
+function JoinFields({ existingNames, onSubmit, submitLabel }: { existingNames: string[]; onSubmit: (name: string, rating: number | null) => Promise<string | null>; submitLabel: string }) {
+  const [name, setName] = useState('')
+  const [rating, setRating] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+
+  const lowerExisting = existingNames.map((n) => n.trim().toLowerCase())
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault()
+    const trimmed = name.trim()
+    if (!trimmed) { setError('Enter your name'); return }
+    if (lowerExisting.includes(trimmed.toLowerCase())) { setError("That name's already taken - try adding a last initial"); return }
+    setSubmitting(true)
+    setError(null)
+    const ratingNum = rating.trim() ? Number(rating.trim()) : null
+    const err = await onSubmit(trimmed, ratingNum != null && !Number.isNaN(ratingNum) ? ratingNum : null)
+    setSubmitting(false)
+    if (err) { setError(err); return }
+    setName('')
+    setRating('')
+  }
+
+  return (
+    <form onSubmit={submit} style={{ backgroundColor: CARD, border: `1px solid ${BORDER}`, borderRadius: 14, padding: '16px 18px' }}>
+      <div style={{ display: 'flex', gap: 10 }}>
+        <input type="text" placeholder="Your name" value={name} onChange={(e) => setName(e.target.value)} autoFocus
+          style={{ flex: 1, minWidth: 0, backgroundColor: BG, border: `1.5px solid ${error ? '#ef4444' : BORDER}`, borderRadius: 10, padding: '12px 14px', color: TEXT, fontSize: 15, outline: 'none' }}
+          onFocus={(e) => (e.target.style.borderColor = ACCENT)}
+          onBlur={(e) => (e.target.style.borderColor = error ? '#ef4444' : BORDER)} />
+        <input type="number" placeholder="Rtg" value={rating} onChange={(e) => setRating(e.target.value)}
+          style={{ width: 68, backgroundColor: BG, border: `1.5px solid ${BORDER}`, borderRadius: 10, padding: '12px 14px', color: TEXT, fontSize: 15, outline: 'none' }}
+          onFocus={(e) => (e.target.style.borderColor = ACCENT)}
+          onBlur={(e) => (e.target.style.borderColor = BORDER)} />
+      </div>
+      {error && <p style={{ color: '#ef4444', fontSize: 13, margin: '8px 0 0' }}>{error}</p>}
+      <button type="submit" disabled={submitting}
+        style={{ width: '100%', backgroundColor: ACCENT, color: BG, fontWeight: 800, border: 'none', borderRadius: 10, padding: '13px', fontSize: 15, cursor: submitting ? 'not-allowed' : 'pointer', opacity: submitting ? 0.6 : 1, marginTop: 12 }}>
+        {submitting ? 'Joining…' : submitLabel}
+      </button>
+    </form>
   )
 }
 
